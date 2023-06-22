@@ -1,0 +1,56 @@
+{
+	"/* comment */": [
+			"This is the configurations file for verifyAddress.py"
+	],
+	"MySQL": {
+		"/* comment */": [
+			"The configuration variables for MySQL",
+			"user - the username for connecting to the database [required]",
+			"passwd - the user password for connecting to the database [required]",
+			"databaseName - the default database [optional]"
+		],
+        "connectionString": "mysql+mysqlconnector://{username}:{password}@{server}/{databaseName}",
+		"username": "root",
+		"password": "example",
+        "server": "localhost",
+		"databaseName": "GNAF"
+	},
+	"MSSQL": {
+		"/* comment */": [
+			"The configuration variables for MSSQL",
+			"user - the username for connecting to the database [required]",
+			"passwd - the user password for connecting to the database [required]",
+			"databaseName - the default database [optional]"
+		],
+        "connectionString": "mssql+pyodbc://{username}:{password}@{server}/{databaseName}?driver=SQL+Server",
+		"username": "root",
+		"password": "example",
+        "server": "localhost:1433",
+		"databaseName": "GNAF"
+	},
+	"weights": {
+		"/* comment */": [
+			"The suburbSourceWeights, streetSourceWeights and fuzzLevels"
+		],
+		"suburbSourceWeights": { "G":10, "GA":9, "GN":8, "GS":5, "GL":4, "GAS":2, "GAL":1, "":0 },
+		"streetSourceWeights": { "G":10, "GA":9, "GS":5, "GL":4, "GAS":2, "GAL":1, "":0 },
+		"fullfuzzLevels": [
+			[1, true, true],
+			[2, true, true],
+			[3, true, true],
+			[4, true, true],
+			[5, true, true],
+			[6, false, true],
+			[7, false, true],
+			[8, false, true],
+			[9, false, true],
+			[10, false, false]
+		],
+		"nofuzzLevels": [
+			[1, true, true]
+		],
+		"fuzzLevels": [
+			[1, true, true]
+		]
+	}
+}

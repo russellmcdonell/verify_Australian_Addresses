@@ -111,6 +111,7 @@ if __name__ == '__main__':
     # Create setfor the flats and levels. We use a set because it eleminate duplicates
     flats = set()
     levels = set()
+    heading = ['code']
 
     # Get the flat types data - CODE is the primary key
     # CODE|NAME|DESCRIPTION
@@ -123,6 +124,15 @@ if __name__ == '__main__':
                     continue
                 flats.add(flat)
 
+    # Output the flats
+    csvOutfile = open('address_flat.psv', 'wt', newline='', encoding='utf-8')
+    csvwriter = csv.writer(csvOutfile, dialect=csv.excel, delimiter='|')
+    csvwriter.writerow(heading)
+    for thisFlat in reversed(sorted(list(flats))):
+        row = [thisFlat]
+        csvwriter.writerow(row)
+    csvOutfile.close()
+
     # Get the level types data - CODE is the primary key
     # CODE|NAME|DESCRIPTION
     levelTypefile = os.path.join(GNAFdir, 'Authority Code', 'Authority_Code_LEVEL_TYPE_AUT_psv.psv')
@@ -134,7 +144,19 @@ if __name__ == '__main__':
                     continue
                 levels.add(level)
 
+    # Output the levels
+    csvOutfile = open('address_level.psv', 'wt', newline='', encoding='utf-8')
+    csvwriter = csv.writer(csvOutfile, dialect=csv.excel, delimiter='|')
+    csvwriter.writerow(heading)
+    for thisLevel in reversed(sorted(list(levels))):
+        row = [thisLevel]
+        csvwriter.writerow(row)
+    csvOutfile.close()
+
+
     # Add in any config FLATs, LEVELs or TRIMs
+    flats = set()
+    levels = set()
     trims = set()
     if 'TRIM' in config:
         for code in config['TRIM']:
@@ -153,11 +175,8 @@ if __name__ == '__main__':
             levels.update(config['LEVEL'][code])
 
     # Now create the output files
-    # code
-    heading = ['code']
-
     # Output the flats
-    csvOutfile = open('address_flat.psv', 'wt', newline='', encoding='utf-8')
+    csvOutfile = open('extraFlats.psv', 'wt', newline='', encoding='utf-8')
     csvwriter = csv.writer(csvOutfile, dialect=csv.excel, delimiter='|')
     csvwriter.writerow(heading)
     for thisFlat in reversed(sorted(list(flats))):
@@ -166,7 +185,7 @@ if __name__ == '__main__':
     csvOutfile.close()
 
     # Output the levels
-    csvOutfile = open('address_level.psv', 'wt', newline='', encoding='utf-8')
+    csvOutfile = open('extraLevels.psv', 'wt', newline='', encoding='utf-8')
     csvwriter = csv.writer(csvOutfile, dialect=csv.excel, delimiter='|')
     csvwriter.writerow(heading)
     for thisLevel in reversed(sorted(list(levels))):
@@ -175,7 +194,7 @@ if __name__ == '__main__':
     csvOutfile.close()
 
     # Output the trims
-    csvOutfile = open('address_trim.psv', 'wt', newline='', encoding='utf-8')
+    csvOutfile = open('extraTrims.psv', 'wt', newline='', encoding='utf-8')
     csvwriter = csv.writer(csvOutfile, dialect=csv.excel, delimiter='|')
     csvwriter.writerow(heading)
     for thisTrim in reversed(sorted(list(trims))):
