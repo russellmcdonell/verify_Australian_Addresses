@@ -1,0 +1,38 @@
+{
+	"/* comment */": [
+			"This is the configurations file of database types for both createSQLAlchemyDB.py and loadSQLAlchemyDB.py",
+            "Each section must define a 'connectionString'",
+            "     which must contain placeholders for 'username', 'password', 'server' and 'databaseName'",
+            "Each section can define default values for 'username', 'password', 'server' and 'databaseName',",
+            "     all of which can be overwritten a runtime with command line arguments.",
+			"NOTE: When adding a new database type - check code that creates the engine [engine = create_engine()].",
+			"      It may need to be tweaked for different database types can require additional parameters.",
+			"      Currently there's a special case for MSSQL as SQL+server required 'use_setinputsizes=False'"
+	],
+	"MySQL": {
+		"/* comment */": [
+			"The configuration variables for MySQL",
+			"user - the username for connecting to the database [required]",
+			"passwd - the user password for connecting to the database [required]",
+			"databaseName - the default database [optional]"
+		],
+        "connectionString": "mysql+mysqlconnector://{username}:{password}@{server}/{databaseName}",
+		"username": "root",
+		"password": "example",
+        "server": "localhost",
+		"databaseName": "GNAF"
+	},
+	"MSSQL": {
+		"/* comment */": [
+			"The configuration variables for MSSQL",
+			"user - the username for connecting to the database [required]",
+			"passwd - the user password for connecting to the database [required]",
+			"databaseName - the default database [optional]"
+		],
+        "connectionString": "mssql+pyodbc://{username}:{password}@{server}/{databaseName}?driver=SQL+Server",
+		"username": "root",
+		"password": "example",
+        "server": "localhost:1433",
+		"databaseName": "GNAF"
+	}
+}
