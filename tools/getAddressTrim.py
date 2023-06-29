@@ -33,8 +33,6 @@ import os
 import csv
 import argparse
 import logging
-import json
-import collections
 
 # This next section is plagurised from /usr/include/sysexits.h
 EX_OK = 0           # successful termination
@@ -97,17 +95,6 @@ if __name__ == '__main__':
         else:
             logging.basicConfig(format=logfmt, datefmt='%d/%m/%y %H:%M:%S %p')
 
-    # Read in the configuration file - which must exist
-    configFile = 'getConfig.json'    # The default configuration file
-    config = {}                 # The configuration data
-    try:
-        with open(configFile, 'r', encoding='ascii') as configfile:
-            config = json.load(configfile, object_pairs_hook=collections.OrderedDict)
-    except IOError :
-        logging.critical('configFile (%s) failed to load', configFile)
-        logging.shutdown()
-        sys.exit(EX_CONFIG)
-
     # Create setfor the flats and levels. We use a set because it eleminate duplicates
     flats = set()
     levels = set()
@@ -150,55 +137,6 @@ if __name__ == '__main__':
     csvwriter.writerow(heading)
     for thisLevel in reversed(sorted(list(levels))):
         row = [thisLevel]
-        csvwriter.writerow(row)
-    csvOutfile.close()
-
-
-    # Add in any config FLATs, LEVELs or TRIMs
-    flats = set()
-    levels = set()
-    trims = set()
-    if 'TRIM' in config:
-        for code in config['TRIM']:
-            if code == '/* comment */':
-                continue
-            trims.update(config['TRIM'][code])
-    if 'FLAT' in config:
-        for code in config['FLAT']:
-            if code == '/* comment */':
-                continue
-            flats.update(config['FLAT'][code])
-    if 'LEVEL' in config:
-        for code in config['LEVEL']:
-            if code == '/* comment */':
-                continue
-            levels.update(config['LEVEL'][code])
-
-    # Now create the output files
-    # Output the flats
-    csvOutfile = open('extraFlats.psv', 'wt', newline='', encoding='utf-8')
-    csvwriter = csv.writer(csvOutfile, dialect=csv.excel, delimiter='|')
-    csvwriter.writerow(heading)
-    for thisFlat in reversed(sorted(list(flats))):
-        row = [thisFlat]
-        csvwriter.writerow(row)
-    csvOutfile.close()
-
-    # Output the levels
-    csvOutfile = open('extraLevels.psv', 'wt', newline='', encoding='utf-8')
-    csvwriter = csv.writer(csvOutfile, dialect=csv.excel, delimiter='|')
-    csvwriter.writerow(heading)
-    for thisLevel in reversed(sorted(list(levels))):
-        row = [thisLevel]
-        csvwriter.writerow(row)
-    csvOutfile.close()
-
-    # Output the trims
-    csvOutfile = open('extraTrims.psv', 'wt', newline='', encoding='utf-8')
-    csvwriter = csv.writer(csvOutfile, dialect=csv.excel, delimiter='|')
-    csvwriter.writerow(heading)
-    for thisTrim in reversed(sorted(list(trims))):
-        row = [thisTrim]
         csvwriter.writerow(row)
     csvOutfile.close()
 

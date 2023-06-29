@@ -350,50 +350,69 @@ A script to extract the G-NAF street numbers, locality postcodes and buildings d
     heading = ['code']
     if 'FLAT' in config:
         with open('extraFlats.psv', 'wt', newline='', encoding='utf-8') as flatFile:
-            flatWriter = csv.writer(flatFile, dialect=csv.excel)
+            flatWriter = csv.writer(flatFile, dialect=csv.excel, delimiter='|')
             flatWriter.writerow(heading)
             for code in config['FLAT']:
                 if code == '/* comment */':
                     continue
-                flatWriter.writerow([config['FLAT'][code]])
+                if code == 'flat':
+                    for flat in config['FLAT']['flat']:
+                        flatWriter.writerow([flat])
     if 'LEVEL' in config:
         with open('extraLevels.psv', 'wt', newline='', encoding='utf-8') as levelFile:
-            levelWriter = csv.writer(levelFile, dialect=csv.excel)
+            levelWriter = csv.writer(levelFile, dialect=csv.excel, delimiter='|')
             levelWriter.writerow(heading)
             for code in config['LEVEL']:
                 if code == '/* comment */':
                     continue
-                levelWriter.writerow([config['LEVEL'][code]])
+                if code == 'level':
+                    for level in config['LEVEL']['level']:
+                        levelWriter.writerow([level])
     if 'TRIM' in config:
         with open('extraTrims.psv', 'wt', newline='', encoding='utf-8') as trimFile:
-            trimWriter = csv.writer(trimFile, dialect=csv.excel)
+            trimWriter = csv.writer(trimFile, dialect=csv.excel, delimiter='|')
             trimWriter.writerow(heading)
             for code in config['TRIM']:
                 if code == '/* comment */':
                     continue
-                trimWriter.writerow([config['TRIM'][code]])
+                if code == 'trim':
+                    for trim in config['TRIM']['trim']:
+                        trimWriter.writerow([trim])
+
+    heading = ['stateAbbrev', 'abbrev']
+    if 'STATES' in config:
+        with open('extraStates.psv', 'wt', newline='', encoding='utf-8') as stateFile:
+            stateWriter = csv.writer(stateFile, dialect=csv.excel, delimiter='|')
+            stateWriter.writerow(heading)
+            for stateAbbrev in config['STATES']:
+                if stateAbbrev == '/* comment */':
+                    continue
+                for abbrev in config['STATES'][stateAbbrev]:
+                    stateWriter.writerow([stateAbbrev, abbrev])
 
     # Then the extra street types
     if 'STREET_TYPE' in config:
-        heading = ['streetType|abbrev']
+        heading = ['streetType', 'abbrev']
         with open('extraStreetTypes.psv', 'wt', newline='', encoding='utf-8') as streetTypeFile:
             streetTypeWriter = csv.writer(streetTypeFile, dialect=csv.excel, delimiter='|')
             streetTypeWriter.writerow(heading)
-            for streetType, abbrev in config['STREET_TYPE'].items():
+            for streetType, abbrevs in config['STREET_TYPE'].items():
                 if streetType == '/* comment */':
                     continue
-                streetTypeWriter.writerow([streetType, abbrev])
+                for abbrev in abbrevs:
+                    streetTypeWriter.writerow([streetType, abbrev])
 
     # Then the extra street Suffixes
     if 'STREET_SUFFIX' in config:
-        heading = ['streetSuffix|abbrev']
+        heading = ['streetSuffix', 'abbrev']
         with open('extraStreetSuffixes.psv', 'wt', newline='', encoding='utf-8') as streetSuffixFile:
             streetSuffixWriter = csv.writer(streetSuffixFile, dialect=csv.excel, delimiter='|')
             streetSuffixWriter.writerow(heading)
-            for streetSuffix, abbrev in config['STREET_SUFFIX'].items():
+            for streetSuffix, abbrevs in config['STREET_SUFFIX'].items():
                 if streetSuffix == '/* comment */':
                     continue
-                streetSuffixWriter.writerow([streetSuffix, abbrev])
+                for abbrev in abbrevs:
+                    streetSuffixWriter.writerow([streetSuffix, abbrev])
 
 
     if ('POSTCODE_SA1' in config) or ('LOCALITY_POSTCODE' in config):

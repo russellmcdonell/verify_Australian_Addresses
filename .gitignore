@@ -7,6 +7,8 @@ data/*.psv
 tools/*.csv
 tools/*.psv
 backup/*
+testoutput/*
+testlogs/*
 ABS/MB/*.csv
 ABS/SA1/*.csv
 ABS/SA1/*.dbf

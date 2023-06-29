@@ -26,44 +26,59 @@
             "To be output to extraTrims.psv",
             "'trim' is a list of strings"
 		],
-		"flat": [
+		"trim": [
 		]
+	},
+	"STATES": {
+		"/* comment */": [
+			"Any state abbreviations that have additionl abbreviations for the name of the state",
+            "To be output to extraStates.psv",
+            "Each key is the official state abbreviation. Each value is a list of extra abbreviations"
+		],
+		"ACT": ["A.C.T.", "ACT."],
+		"NSW": ["N.S.W.", "NSW.", "N.S.W"],
+		"NT": ["N.T.", "NT.", "N.T"],
+		"OT": ["O.T.", "OT.", "O.T"],
+		"QLD": ["QLD."],
+		"SA": ["S.A.", "SA.", "S.A"],
+		"TAS": ["TAS."],
+		"VIC": ["VIC."],
+		"WA": ["W.A.", "WA.", "W.A"]
 	},
 	"STREET_TYPE": {
 		"/* comment */": [
 			"Any additional Street Types",
-            "key = Street Type (in full), value = additional abbreviation"
+            "key = Street Type (in full), value = list of additional abbreviation"
 		],
-        "AVENUE": "AVE",
-		"BOULEVARD": "BLVD",
-		"CIRCUIT": "CRCT",
-        "CIRCUIT": "CIRC",
-        "CENTRAL": "CN",
-        "CRESCENT": "CRES",
-        "COURT": "CRT",
-		"DRIVE": "DRV",
-        "EAST": "E",
-        "EXTENSION": "EX",
-        "INNER": "IN",
-        "LOWER": "LR",
-        "MALL": "ML",
-        "NORTH": "N",
-        "NORTH EAST": "NE",
-        "NORTH WEST": "NW",
-        "OFF": "OF",
-        "OVERPASS": "OP",
-        "OUTER": "OT",
-		"PARKWAY": "PKWY",
-        "SOUTH": "S",
-        "SOUTH EAST": "SE",
-        "SOUTH WEST": "SW",
-        "UPPER": "UP",
-        "WEST": "W"
+        "AVENUE": ["AVE"],
+		"BOULEVARD": ["BLVD"],
+		"CIRCUIT": ["CRCT", "CIRC"],
+        "CENTRAL": ["CN"],
+        "CRESCENT": ["CRES"],
+        "COURT": ["CRT"],
+		"DRIVE": ["DRV"],
+        "EAST": ["E"],
+        "EXTENSION": ["EX"],
+        "INNER": ["IN"],
+        "LOWER": ["LR"],
+        "MALL": ["ML"],
+        "NORTH": ["N"],
+        "NORTH EAST": ["NE"],
+        "NORTH WEST": ["NW"],
+        "OFF": ["OF"],
+        "OVERPASS": ["OP"],
+        "OUTER": ["OT"],
+		"PARKWAY": ["PKWY"],
+        "SOUTH": ["S"],
+        "SOUTH EAST": ["SE"],
+        "SOUTH WEST": ["SW"],
+        "UPPER": ["UP"],
+        "WEST": ["W"]
 	},
 	"STREET_SUFFIX": {
 		"/* comment */": [
 			"Any additional Street Suffixes",
-            "key = Street Suffix (in full), value = additional abbreviation"
+            "key = Street Suffix (in full), value = list of additional abbreviation"
 		]
 	},
 	"POSTCODE_SA1": {

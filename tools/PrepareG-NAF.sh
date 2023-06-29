@@ -15,11 +15,11 @@ ABSdir="$2"
 
 
 # Create the address_trim.psv file (merging the flat types and level types, and adding in any local definitions)
-if test -f "address_flat.psv" && test -f "address_level.psv" && test -f "address_trim.psv"
+if test -f "address_flat.psv" && test -f "address_level.psv"
 then
-	echo "address_flat.psv, address_level.psv and address_trim.psv already created"
+	echo "address_flat.psv, address_level.psv already created"
 else
-	echo "creating address_flat.psv, address_level.psv and address_trim.psv"
+	echo "creating address_flat.psv, address_level.psv"
 	python3 getAddressTrim.py -G "${GNAFdir}"
 fi
 
@@ -194,6 +194,19 @@ else
 	for i in NSW NT OT QLD SA TAS VIC WA
 	do
 		python3 csvFind.py -c notRetired "${GNAFdir}/Standard/${i}_ADDRESS_DETAIL_psv.psv" | python3 csvExtract.py -s -c ADDRESS_DETAILS >> address_detail.psv
+	done
+fi
+
+# Create the address_default_geocode.psv file
+if test -f "address_default_geocode.psv"
+then
+	echo "temporary file address_default_geocode.psv already created"
+else
+	echo "creating address_default_geocode.psv"
+	python3 csvFind.py -c notRetired "${GNAFdir}/Standard/ACT_ADDRESS_DEFAULT_GEOCODE_psv.psv" | python3 csvExtract.py -c ADDRESS_DEFAULT_GEOCODE > address_default_geocode.psv
+	for i in NSW NT OT QLD SA TAS VIC WA
+	do
+		python3 csvFind.py -c notRetired "${GNAFdir}/Standard/${i}_ADDRESS_DEFAULT_GEOCODE_psv.psv" | python3 csvExtract.py -s -c ADDRESS_DEFAULT_GEOCODE >> address_default_geocode.psv
 	done
 fi
 
