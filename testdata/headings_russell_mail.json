@@ -1,0 +1,13 @@
+{
+	"/* comment */": [
+			"This is the headings file for verifyAddress.py",
+			"addressLines is an array. suburb, state and postcode are single name/value pairs"
+	],
+	"addressLines": [
+			"Address_1",
+			"Address_2"
+	],
+	"suburb" : "Locality",
+	"state" : "State",
+	"postcode" : "Postcode"
+}
