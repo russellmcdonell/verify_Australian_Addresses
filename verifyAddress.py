@@ -1632,6 +1632,55 @@ Return anything left over
         parts[ii] = parts[ii].strip()
         if parts[ii] == '':
             del parts[ii]
+        if parts[ii].startswith('N '):
+            parts[ii] = 'NORTH' + parts[ii][1:]
+        elif parts[ii].startswith('N. '):
+            parts[ii] = 'NORTH' + parts[ii][2:]
+        elif parts[ii].startswith('NTH '):
+            parts[ii] = 'NORTH' + parts[ii][3:]
+        elif parts[ii].startswith('NTH. '):
+            parts[ii] = 'NORTH' + parts[ii][4:]
+        if parts[ii].endswith(' N'):
+            parts[ii] = parts[ii][:-1] + 'NORTH'
+        elif parts[ii].endswith(' N.'):
+            parts[ii] = parts[ii][:-2] + 'NORTH'
+        elif parts[ii].startswith(' NTH'):
+            parts[ii] = parts[ii][:-3] + 'NORTH'
+        elif parts[ii].startswith(' NTH.'):
+            parts[ii] = parts[ii][:-4] + 'NORTH'
+        if parts[ii].startswith('S '):
+            parts[ii] = 'SOUTH' + parts[ii][1:]
+        elif parts[ii].startswith('S. '):
+            parts[ii] = 'SOUTH' + parts[ii][2:]
+        elif parts[ii].startswith('STH '):
+            parts[ii] = 'SOUTH' + parts[ii][3:]
+        elif parts[ii].startswith('STH. '):
+            parts[ii] = 'SOUTH' + parts[ii][4:]
+        if parts[ii].endswith(' S'):
+            parts[ii] = parts[ii][:-1] + 'SOUTH'
+        elif parts[ii].endswith(' S.'):
+            parts[ii] = parts[ii][:-2] + 'SOUTH'
+        elif parts[ii].startswith(' STH'):
+            parts[ii] = parts[ii][:-3] + 'SOUTH'
+        elif parts[ii].startswith(' STH.'):
+            parts[ii] = parts[ii][:-4] + 'SOUTH'
+        if parts[ii].startswith('E '):
+            parts[ii] = 'EAST' + parts[ii][1:]
+        elif parts[ii].startswith('E. '):
+            parts[ii] = 'EAST' + parts[ii][2:]
+        if parts[ii].endswith(' E'):
+            parts[ii] = parts[ii][:-1] + 'EAST'
+        elif parts[ii].endswith(' E.'):
+            parts[ii] = parts[ii][:-2] + 'EAST'
+        if parts[ii].startswith('W '):
+            parts[ii] = 'WEST' + parts[ii][1:]
+        elif parts[ii].startswith('W. '):
+            parts[ii] = 'WEST' + parts[ii][2:]
+        if parts[ii].endswith(' W'):
+            parts[ii] = parts[ii][:-1] + 'WEST'
+        elif parts[ii].endswith(' W.'):
+            parts[ii] = parts[ii][:-2] + 'WEST'
+
     for thisPart in parts:
         this.logger.debug('scanForSuburb[%s] - saving parts (%s)', direction, thisPart)
         this.foundSuburbText[thisPart] = isAPI        # Add all parts as possible suburbs
@@ -1906,18 +1955,26 @@ And the building has to be in the valid postcode, in the valid state
     '''
 
     if len(this.foundBuilding) == 0:
-        return
+        return False
     if (this.validState is None) or (this.validPostcode is None):
-        return
+        if not verifydata.result['isPostalService']:
+            verifydata.result['buildingName'] = ''
+        return False
     if len(postcodes[this.validPostcode]['states']) > 1:
         this.logger.debug('scoreBuilding - ambiguous postcode')
-        return
+        if not verifydata.result['isPostalService']:
+            verifydata.result['buildingName'] = ''
+        return False
     if this.validState not in postcodes[this.validPostcode]['states']:
         this.logger.debug('scoreBuilding - postcode not in this state')
-        return
+        if not verifydata.result['isPostalService']:
+            verifydata.result['buildingName'] = ''
+        return False
     if this.validPostcode not in postcodeLocalities:
         this.logger.debug('scoreBuilding - unknown postcode(%s)', this.validPostcode)
-        return
+        if not verifydata.result['isPostalService']:
+            verifydata.result['buildingName'] = ''
+        return False
     for thisBuilding in this.foundBuilding:
         buildingName = thisBuilding[0]
         houseNo = thisBuilding[1]
@@ -1966,7 +2023,11 @@ And the building has to be in the valid postcode, in the valid state
         this.result['accuracy'] = '4'
         this.result['score'] |= 8192
         setupAddress1Address2(this)
-    return
+        break
+    else:
+        verifydata.result['buildingName'] = ''
+        return False
+    return True
 
 
 def accuracy2(this, thisSuburb, statePid):
@@ -2544,7 +2605,11 @@ based upon this.fuzzLevel
     elif this.fuzzLevel == 3:
         # Add Levenshtein Distance streets to this.validStreets for streets already in this.validStreets
         this.logger.info('expandSuburbAndStreets - addding Levenshtein Distance like streets (same postcode and state)')
+        GAset = set(['G', 'GA'])        # Don't expand on sounds like streets
         for streetKey in list(this.validStreets):
+            srcs = set(this.validStreets[streetKey])
+            if srcs.isdisjoint(GAset):
+                continue
             streetName = this.validStreets[streetKey]['SX'][1]
             streetLength = len(streetName)
             maxDist = int((streetLength + 2) / 4)
@@ -2699,6 +2764,14 @@ based upon this.fuzzLevel
         # Add Levenshtein Distance suburbs to this.validSuburbs for all suburbs already in this.validSuburb
         this.logger.info('expandSuburbAndStreets - addding Levenshtein Distance like suburbs (same postcode and state)')
         for suburb in list(this.validSuburbs):
+            toCheck = False         # Don't expand on sounds like suburbs
+            for statePid in this.validSuburbs[suburb]:
+                for src in this.validSuburbs[suburb][statePid]:
+                    if src in ['G', 'GA']:
+                        toCheck = True
+                        break
+            if not toCheck:
+                continue
             suburbLength = len(suburb)
             maxDist = int((suburbLength + 2) / 4)
             minLen = max(0, suburbLength - 2)
@@ -2832,14 +2905,17 @@ based upon this.fuzzLevel
                     srcs = streets[soundCode][otherKey]
                     addSources(this, otherKey, srcs)
     elif this.fuzzLevel == 10:
-        # Add streets from other states/postcodes
-        this.logger.info('expandSuburbAndStreets - addding soundex streets (other state)')
-        for streetKey in this.validStreets:
-            soundCode = this.validStreets[streetKey]['SX'][0]
-            for src in streets[soundCode][streetKey]:
-                if src == 'SX':
+        # Add streets from other states/postcodes (with the same soundex code)
+        this.logger.info('expandSuburbAndStreets - adding soundex streets (other state)')
+        if this.street is not None:
+            soundCode = jellyfish.soundex(this.streetName)
+            for streetKey in this.validStreets:
+                if this.validStreets[streetKey]['SX'][0] != soundCode:
                     continue
-                this.validStreets[streetKey][src] = streets[soundCode][streetKey][src]
+                for src in streets[soundCode][streetKey]:
+                    if src == 'SX':
+                        continue
+                    this.validStreets[streetKey][src] = streets[soundCode][streetKey][src]
     return
 
 
@@ -3076,8 +3152,8 @@ Set up the return data with the geocoding for this street
                         this.result['score'] |= 4
             else:
                 this.result['postcode'] = ''
-    scoreBuilding(this)            # See if we can do better with a building address
-    setupAddress1Address2(this)
+    if not scoreBuilding(this):            # See if we can do better with a building address
+        setupAddress1Address2(this)
     return
 
 
@@ -3332,7 +3408,6 @@ The accuracy is
                 this.logger.debug('Strip Trim: building(%s) found ', building)
     if len(this.foundBuilding) > 0:
         this.result['buildingName'] = this.foundBuilding[0][0]
-        this.logger.debug('Addres line is now (%s)', addressLine)
     else:
         this.logger.debug('None found')
 
@@ -3487,15 +3562,13 @@ The accuracy is
     '''
     Rules 1 and 2
     '''
+    this.fuzzLevel = 0      # No fuzzy logic for Rules 1 and 2 tests
     if not Rules1and2(this):
         this.logger.debug('Failed Rules1and2')
         this.result['status'] = 'Address not found'
         this.result['accuracy'] = '0'
         setupAddress1Address2(this)
         return
-
-    # Start with fuzzLevel 1
-    this.fuzzLevel = 1
 
     '''
     Create Valid Streets
@@ -3593,8 +3666,8 @@ The accuracy is
                         this.result['score'] |= 2048
                     this.result['status'] = 'Address not found'
                     this.result['accuracy'] = '0'
-                    scoreBuilding(this)            # See if we can do better with a building address
-                    setupAddress1Address2(this)
+                    if not scoreBuilding(this):            # See if we can do better with a building address
+                        setupAddress1Address2(this)
                     return
                 elif thisState is None:                # And it's unique within one state
                     thisState = list(postcodes[thisPostcode]['states'])[0]
@@ -3649,8 +3722,8 @@ The accuracy is
                 if not found:
                     this.result['status'] = 'Address not found'
                     this.result['accuracy'] = '0'
-                    scoreBuilding(this)            # See if we can do better with a building address
-                    setupAddress1Address2(this)
+                    if not scoreBuilding(this):            # See if we can do better with a building address
+                        setupAddress1Address2(this)
                     return
                 this.result['G-NAF ID'] = gnafId
                 this.result['SA1'] = SA1
@@ -3659,8 +3732,8 @@ The accuracy is
                 this.result['longitude'] = longitude
                 this.result['status'] = 'Suburb found'
                 this.result['accuracy'] = '2'
-                scoreBuilding(this)            # See if we can do better with a building address
-                setupAddress1Address2(this)
+                if not scoreBuilding(this):           # See if we can do better with a building address
+                    setupAddress1Address2(this)
                 return
             # We have no state or no postcode
             this.result['suburb'] = thisSuburb
@@ -3695,8 +3768,8 @@ The accuracy is
                 this.result['score'] |= 2048
             this.result['status'] = 'Address not found'
             this.result['accuracy'] = '0'
-            scoreBuilding(this)            # See if we can do better with a building address
-            setupAddress1Address2(this)
+            if not scoreBuilding(this):            # See if we can do better with a building address
+                setupAddress1Address2(this)
             return
     else:
         # We have streets within suburbs - return the first one - it's a guess
@@ -3943,22 +4016,13 @@ Validate an address against some known Australian concept (postcode, known Austr
                     logging.shutdown()
                     sys.exit(EX_USAGE)
                 for fuzz in range(len(fuzzLevels) - 1, -1, -1):
-                    if not isinstance(fuzzLevels[fuzz], list):
+                    if not isinstance(fuzzLevels[fuzz], int):
+                        verifydata.logger.warning(' Invalid fuzzLevel (%s) in configuraton file(%s) - ignoring', fuzz, configfile)
                         del fuzzLevels[fuzz]
                         continue
-                    if not isinstance(fuzzLevels[fuzz][0], int):
+                    if (fuzzLevels[fuzz] < 1) or (fuzzLevels[fuzz][0] > 10):
+                        verifydata.logger.warning(' Invalid fuzzLevel (%d) in configuraton file(%s) - ignoring', fuzz, configfile)
                         del fuzzLevels[fuzz]
-                        continue
-                    if (fuzzLevels[fuzz][0] < 1) or (fuzzLevels[fuzz][0] > 10):
-                        fuzzLevels[fuzz][0] = 1
-                    if len(fuzzLevels[fuzz]) < 2:
-                        fuzzLevels[fuzz].append(True)
-                    elif not isinstance(fuzzLevels[fuzz][1], bool):
-                        fuzzLevels[fuzz][1] = True
-                    if len(fuzzLevels[fuzz]) < 3:
-                        fuzzLevels[fuzz].append(True)
-                    elif not isinstance(fuzzLevels[fuzz][2], bool):
-                        fuzzLevels[fuzz][2] = True
 
 
     # Check if files have headings and if so read in the mapping

@@ -11,8 +11,8 @@ fi
 ABSdir="$1"
 
 # Create the street_numbers.psv, locality_postcode.psv and buildings.psv files
-if test -f "extraFlats.psv" && test -f "extraLevels.psv" && test -f "extraTrims.psv" && test -f "extraStates.psv" && test -f "extraStreetTypes.psv" && test -f "extraPostcodeSA1LGA.psv" && test -f "extraLocality.psv" ; then
-	echo "extraFlats.psv, extraLevels.psv, extraTrims.psv, extraStates.psv, extraStreetTypes.psv, extraPostcodeSA1LGA.psv and extraLocality.psv already created"
+if test -f "extraFlats.psv" && test -f "extraLevels.psv" && test -f "extraTrims.psv" && test -f "extraStates.psv" && test -f "extraStreetTypes.psv" && test -f "extraStreetSuffixes.psv" && test -f "extraPostcodeSA1LGA.psv" && test -f "extraLocality.psv" ; then
+    echo "extraFlats.psv extraLevels.psv extraTrims.psv extraStates.psv extraStreetTypes.psv extraStreetSuffixes.psv extraPostcodeSA1LGA.psv and extraLocality.psv already created"
 elif test ! -f "state.psv" ; then
 	echo "required file state.psv is missing. Run PrepareG-NAF.sh"
 elif test ! -f "locality.psv" ; then

@@ -3,8 +3,9 @@
 # pylint: disable=line-too-long, pointless-string-statement, invalid-name, missing-function-docstring
 
 '''
-A script to create extraFlats.psv, extraLevels.psv, extraTrims.psv, extraStreetTypes.psv,
-from getConfig.json
+A script to create extraFlats.psv, extraLevels.psv, extraTrims.psv,
+extraStates.psv, extraStreetTypes.psv, extraStreetSuffixes.psv
+extraPostcodeSA1LGA.psv and extraLocality.psv from getConfig.json
 
 
 SYNOPSIS
@@ -295,7 +296,9 @@ def cleanText(text, removeCommas):
 # The main code
 if __name__ == '__main__':
     '''
-A script to extract the G-NAF street numbers, locality postcodes and buildings data from a set of G-NAF psv files.
+A script to create extraFlats.psv, extraLevels.psv, extraTrims.psv,
+extraStates.psv, extraStreetTypes.psv, extraStreetSuffixes.psv
+extraPostcodeSA1LGA.psv and extraLocality.psv from getConfig.json
     '''
 
     # Get the script name (without the '.py' extension)
