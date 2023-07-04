@@ -1710,7 +1710,7 @@ Return anything left over
                             this.validSuburbs[thisSuburb][statePid] = {}
                         for src in ['G', 'GA', 'A']:            # Only add primary sources
                             if (src in suburbs[soundCode][thisSuburb][statePid]) and (src not in this.validSuburbs[thisSuburb][statePid]):
-                                this.logger.debug('scanForSuburb - adding source(%s), for state(%s) for suburb(%s) to validSuburbs',
+                                this.logger.info('scanForSuburb - adding source(%s), for state(%s) for suburb(%s) to validSuburbs',
                                                   src, states[statePid][0], thisSuburb)
                                 this.logger.debug('scanForSuburb - (%s)', repr(suburbs[soundCode][thisSuburb][statePid][src]))
                                 this.validSuburbs[thisSuburb][statePid][src] = suburbs[soundCode][thisSuburb][statePid][src]
@@ -2302,7 +2302,7 @@ def createValidStreets(this):
 Create the set of validStreets using streetName, streetType and streetSuffix
     '''
 
-    if this.street is None:
+    if this.streetName is None:
         this.logger.debug('createValidStreets - no street')
         return
     this.logger.debug('createValidStreets - for street(%s)', this.street)
@@ -2570,7 +2570,7 @@ based upon this.fuzzLevel
                     newSources[src + 'S'] = streets[soundCode][otherKey][src]
                 addSources(this, otherKey, newSources)
         # Add soundex streets to this.validStreets for this.streetName, this.streetType, this.streetSuffix if not already in this.validStreets
-        if this.street is not None:
+        if this.streetName is not None:
             soundCode = jellyfish.soundex(this.streetName)
             if soundCode in streets:            # Does any street sound like this
                 for otherKey in streets[soundCode]:
@@ -2604,7 +2604,7 @@ based upon this.fuzzLevel
                     addSources(this, otherKey, newSources)
     elif this.fuzzLevel == 3:
         # Add Levenshtein Distance streets to this.validStreets for streets already in this.validStreets
-        this.logger.info('expandSuburbAndStreets - addding Levenshtein Distance like streets (same postcode and state)')
+        this.logger.info('expandSuburbAndStreets - adding Levenshtein Distance like streets (same postcode and state)')
         GAset = set(['G', 'GA'])        # Don't expand on sounds like streets
         for streetKey in list(this.validStreets):
             srcs = set(this.validStreets[streetKey])
@@ -2649,7 +2649,7 @@ based upon this.fuzzLevel
                             addSources(this, otherKey, newSources)
                             processed.add(otherKey)
         # Add Levenshtein Distance streets to this.validStreets for this.streetName, this.streetType, this.streetSuffix if not already in this.validStreets
-        if this.street is not None:
+        if this.streetName is not None:
             soundCode = jellyfish.soundex(this.streetName)
             if this.streetType is None:
                 if this.streetSuffix is None:
@@ -2699,7 +2699,7 @@ based upon this.fuzzLevel
 
     elif this.fuzzLevel == 4:
         # Add soundex suburbs to this.validSuburbs for suburbs already in this.validSuburbs
-        this.logger.info('expandSuburbAndStreets - addding soundex like suburbs (same postcode and state)')
+        this.logger.info('expandSuburbAndStreets - adding soundex like suburbs (same postcode and state)')
         for suburb in list(this.validSuburbs):
             soundCode = this.validSuburbs[suburb]['SX'][0]
             isAPI = this.validSuburbs[suburb]['SX'][1]
@@ -2762,7 +2762,7 @@ based upon this.fuzzLevel
         bestSuburb(this)        # Compute the best suburbs
     elif this.fuzzLevel == 5:
         # Add Levenshtein Distance suburbs to this.validSuburbs for all suburbs already in this.validSuburb
-        this.logger.info('expandSuburbAndStreets - addding Levenshtein Distance like suburbs (same postcode and state)')
+        this.logger.info('expandSuburbAndStreets - adding Levenshtein Distance like suburbs (same postcode and state)')
         for suburb in list(this.validSuburbs):
             toCheck = False         # Don't expand on sounds like suburbs
             for statePid in this.validSuburbs[suburb]:
@@ -2837,7 +2837,7 @@ based upon this.fuzzLevel
         bestSuburb(this)        # Compute the best suburbs
     elif this.fuzzLevel == 6:
         # Add the streets in neighbouring suburbs to the streets in this.validSuburbs for this state
-        this.logger.info('expandSuburbAndStreets - addding neighbouring suburbs')
+        this.logger.info('expandSuburbAndStreets - adding neighbouring suburbs')
         if this.validState is not None:
             for suburb in this.validSuburbs:
                 this.logger.debug('fuzzLevel 6 - looking for neighbours for suburb(%s), in state(%s)', suburb, states[this.validState][0])
@@ -2850,7 +2850,7 @@ based upon this.fuzzLevel
         bestSuburb(this)        # Compute the best suburbs
     elif this.fuzzLevel == 7:
         # Add back the soundex and levenshtein streets for this state
-        this.logger.info('expandSuburbAndStreets - addding soundex suburbs (same state)')
+        this.logger.info('expandSuburbAndStreets - adding soundex suburbs (same state)')
         for thisLevel in [2, 3]:
             if thisLevel not in this.parkedWrongPostcode:
                 continue
@@ -2867,7 +2867,7 @@ based upon this.fuzzLevel
                     this.validStreets[streetKey][src].update(this.parkedWrongPostcode[thisLevel][streetKey][src])
     elif this.fuzzLevel == 8:
         # Add back the soundex and levenshtein streets for this state, from soundex and levenshtein suburbs
-        this.logger.info('expandSuburbAndStreets - addding soundex and Levenshtein streets (same state)')
+        this.logger.info('expandSuburbAndStreets - adding soundex and Levenshtein streets (same state)')
         for thisLevel in [4, 5]:
             if thisLevel not in this.parkedWrongPostcode:
                 continue
@@ -2885,7 +2885,7 @@ based upon this.fuzzLevel
         bestSuburb(this)        # Compute the best suburbs
     elif this.fuzzLevel == 9:
         # Add streets with different street types to this.validStreets
-        this.logger.info('expandSuburbAndStreets - addding soundex and Levenshtein suburbs (same state)')
+        this.logger.info('expandSuburbAndStreets - adding streets with different street types')
         for streetKey in list(this.validStreets):
             soundCode = this.validStreets[streetKey]['SX'][0]
             streetName = this.validStreets[streetKey]['SX'][1]
@@ -2904,10 +2904,27 @@ based upon this.fuzzLevel
                         this.validStreets[otherKey]['SX'] = [soundCode, streetName, streetType, streetSuffix]
                     srcs = streets[soundCode][otherKey]
                     addSources(this, otherKey, srcs)
+        # Add streets with different street types to this.streetName, this.streetType for this.streetName
+        if this.streetName is not None:
+            for otherType in list(streetTypes) + ['']:            # All the street type, plus no street type
+                if (this.streetType is not None) and (otherType == this.streetType):
+                    continue
+                if this.streetSuffix is None:
+                    otherKey = '~'.join([this.streetName, otherType, ''])
+                else:
+                    otherKey = '~'.join([this.streetName, otherType, this.streetSuffix])
+                soundCode = jellyfish.soundex(this.streetName)
+                if soundCode in streets:
+                    if otherKey in streets[soundCode]:
+                        if otherKey not in this.validStreets:
+                            this.validStreets[otherKey] = {}
+                            this.validStreets[otherKey]['SX'] = [soundCode, this.streetName, this.streetType, this.streetSuffix]
+                        srcs = streets[soundCode][otherKey]
+                        addSources(this, otherKey, srcs)
     elif this.fuzzLevel == 10:
         # Add streets from other states/postcodes (with the same soundex code)
         this.logger.info('expandSuburbAndStreets - adding soundex streets (other state)')
-        if this.street is not None:
+        if this.streetName is not None:
             soundCode = jellyfish.soundex(this.streetName)
             for streetKey in this.validStreets:
                 if this.validStreets[streetKey]['SX'][0] != soundCode:
@@ -3515,7 +3532,10 @@ The accuracy is
             if this.streetName == '':
                 this.streetName = None
             extraText = addressLine[streetTypeEnd:].strip()
-    this.logger.debug('Street name (%s), extraText (%s)', this.streetName, extraText)
+    if streetTypeAt is not None:
+        this.logger.info('Street name (%s %s), extraText (%s)', this.streetName, this.streetType, extraText)
+    elif streetAt is not None:
+        this.logger.info('Street name (%s), extraText (%s)', this.streetName, extraText)
 
     # Check extraText for streetSuffix
     if extraText != '':
