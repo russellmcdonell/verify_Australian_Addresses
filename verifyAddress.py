@@ -202,7 +202,7 @@ cursor = None                   # The database cursor for tables
 states = {}                     # The stateAbbrev, regex(stateName), regex(stateAbbrev) for each statePid
 postcodes = {}                  # Postcodes and their states and suburbs
 suburbs = {}                    # Locality and Suburb data
-suburbLen = {}                  # Length of each suburb name and matching soundex list
+suburbLen = {}                  # Length of each suburb name, soundex code and list of suburbs
 maxSuburbLen = None             # Length of the longest suburb
 localities = {}                 # Lists of statePid, localityName, alias for each localityPid
 stateLocalities = {}            # Sets of localityPids for each statePid
@@ -215,6 +215,7 @@ streetLen = {}                  # Length of street name with all the matching st
 shortStreets = {}               # Street with no street type and their geocode data
 streetTypes = {}                # Street type and list of streetTypeAbbrev, regex(streetType), regex(streetTypeAbbrev)
 streetTypeCount = {}            # Street type and count of properties with this street type
+streetTypeSound = {}            # Unique soundex for street types
 streetSuffixes = {}             # Street suffix and list of regex(streetSuffix), streetSuffixAbbrev)
 streetNos = {}                  # Streets with their houses and geocode data
 stateStreets = {}               # Sets of streetPids for each statePid
@@ -609,8 +610,11 @@ def addPostcode(this, postcode, suburb, statePid, sa1, lga, latitude, longitude)
     if (maxSuburbLen is None) or (suburbLength > maxSuburbLen):
         maxSuburbLen = suburbLength
     if suburbLength not in suburbLen:
-        suburbLen[suburbLength] = []
-    suburbLen[suburbLength].append([soundCode, suburb])
+        suburbLen[suburbLength] = {}
+    if soundCode not in suburbLen[suburbLength]:
+        suburbLen[suburbLength][soundCode] = []
+    if suburb not in suburbLen[suburbLength][soundCode]:
+        suburbLen[suburbLength][soundCode].append(suburb)
 
     return
 
@@ -620,6 +624,8 @@ def addSuburb(this, localityPid, statePid, suburb, alias, sa1, lga, latitude, lo
     Add suburb data from localitySA1LGA, locality_SA1LGA.psv
     '''
     # this.logger.debug('Adding suburb %s', suburb)
+
+    global maxSuburbLen
 
     soundCode = jellyfish.soundex(suburb)
     if soundCode not in suburbs:
@@ -638,9 +644,14 @@ def addSuburb(this, localityPid, statePid, suburb, alias, sa1, lga, latitude, lo
         suburbs[soundCode][suburb][statePid]['GA'][localityPid] = [sa1, lga, latitude, longitude]
     addNeighbours(this, localityPid, soundCode, suburb, statePid, sa1, lga, latitude, longitude, set(), 4)
     suburbLength = len(suburb)
+    if (maxSuburbLen is None) or (suburbLength > maxSuburbLen):
+        maxSuburbLen = suburbLength
     if suburbLength not in suburbLen:
-        suburbLen[suburbLength] = []
-    suburbLen[suburbLength].append([soundCode, suburb])
+        suburbLen[suburbLength] = {}
+    if soundCode not in suburbLen[suburbLength]:
+        suburbLen[suburbLength][soundCode] = []
+    if suburb not in suburbLen[suburbLength][soundCode]:
+        suburbLen[suburbLength][soundCode].append(suburb)
 
     return
 
@@ -649,7 +660,7 @@ def addLocality(this, localityPid, suburb, postcode, statePid, alias):
     '''
     Add locality data from LOCALITY, LOCALITY_ALIAS, locality.psv
     '''
-    # this.logger.debug('Adding Locality %s', suburb)
+    # this.logger.debug('Adding locality %s', suburb)
 
     if localityPid not in localities:
         localities[localityPid] = []
@@ -866,14 +877,16 @@ def initData(this):
     this.logger.info('Fetching states')
     sts = []
     if DatabaseType is not None:    # Use the database tables
-        dfStates = pd.read_sql_query(text('SELECT state_pid, state_name, state_abbreviation FROM STATE WHERE date_retired IS NULL'), engine.connect())
+        dfStates = pd.read_sql_query(text('SELECT state_pid, date_retired, state_name, state_abbreviation FROM STATE WHERE date_retired IS NULL'), engine.connect())
         results = dfStates.values.tolist()
-        for (statePid, name, state) in results:
+        for (statePid, date_retired, name, state) in results:
+            if date_retired is not None:
+                continue
             sts.append([statePid, cleanText(name, True), state])
     elif GNAFdir is not None:       # Use the standard G-NAF PSV files
         # STATE_PID|DATE_CREATED|DATE_RETIRED|STATE_NAME|STATE_ABBREVIATION
         for SandT in SandTs:
-            with open(os.path.join(GNAFdir, SandT + '_STATE_psv.psv'), 'rt', newline='', encoding='utf-8') as stateFile:
+            with open(os.path.join(GNAFdir, 'Standard', SandT + '_STATE_psv.psv'), 'rt', newline='', encoding='utf-8') as stateFile:
                 stateReader = csv.DictReader(stateFile, dialect=csv.excel, delimiter='|')
                 for rrow in stateReader:
                     if rrow['DATE_RETIRED'] != '':        # Skip if retired
@@ -913,20 +926,23 @@ def initData(this):
                                 states[statePid].append(re.compile(r'\b' + rrow['abbrev'].replace(' ', r'\s+')))
                             else:
                                 states[statePid].append(re.compile(r'\b' + rrow['abbrev'].replace(' ', r'\s+') + r'\b'))
-    this.logger.info('states fetched')
+    this.logger.info('%d states fetched', len(states))
 
     # Read in the neighbouring localities
     this.logger.info('Fetching neighbouring suburbs')
     nextDoor = []
     if DatabaseType is not None:    # Use the database tables
-        dfNeighbour = pd.read_sql_query(text('SELECT locality_pid, neighbour_locality_pid FROM LOCALITY_NEIGHBOUR'), engine.connect())
+        dfNeighbour = pd.read_sql_query(text('SELECT date_retired, locality_pid, neighbour_locality_pid FROM LOCALITY_NEIGHBOUR'), engine.connect())
         results = dfNeighbour.values.tolist()
-        for (locality_pid, neighbour) in results:
+        for (date_retired, locality_pid, neighbour) in results:
+            if date_retired is not None:
+                continue
             nextDoor.append([locality_pid, neighbour])
+            nextDoor.append([neighbour, locality_pid])
     elif GNAFdir is not None:       # Use the standard G-NAF CSV files
         # LOCALITY_NEIGHBOUR_PID|DATE_CREATED|DATE_RETIRED|LOCALITY_PID|NEIGHBOUR_LOCALITY_PID
         for SandT in SandTs:
-            with open(os.path.join(GNAFdir, SandT + '_LOCALITY_NEIGHBOUR_psv.psv'), 'rt', newline='', encoding='utf-8') as neighbourFile:
+            with open(os.path.join(GNAFdir, 'Standard', SandT + '_LOCALITY_NEIGHBOUR_psv.psv'), 'rt', newline='', encoding='utf-8') as neighbourFile:
                 neighbourReader = csv.DictReader(neighbourFile, dialect=csv.excel, delimiter='|')
                 for rrow in neighbourReader:
                     if rrow['DATE_RETIRED'] != '':        # Skip if retired
@@ -936,6 +952,7 @@ def initData(this):
                     if rrow['NEIGHBOUR_LOCALITY_PID'] == '':
                         continue
                     nextDoor.append([rrow['LOCALITY_PID'], rrow['NEIGHBOUR_LOCALITY_PID']])
+                    nextDoor.append([rrow['NEIGHBOUR_LOCALITY_PID'], rrow['LOCALITY_PID']])
     else:           # Use the optimised CSV files
         #locality_pid|neighbour
         with open(os.path.join(DataDir, 'neighbours.psv'), 'rt', newline='', encoding='utf-8') as neighbourFile:
@@ -954,7 +971,10 @@ def initData(this):
         if locality_pid not in neighbours:
             neighbours[locality_pid] = set()
         neighbours[locality_pid].add(neighbour)
-    this.logger.info('Neighbouring suburbs fetched')
+    neighbourCount = 0
+    for locality_pid, neighbourList in neighbours.items():
+        neighbourCount += len(neighbourList)
+    this.logger.info('%d Neighbouring suburbs fetched', neighbourCount)
 
     # Read in ABS linked postcode and suburb data
     this.logger.info('Fetching suburb and locality data')
@@ -989,16 +1009,17 @@ def initData(this):
 
     # Read in the suburbs (locality names) and create regular expressions so we can look for them.
     this.logger.info('Fetching suburbs')
-    subs = []
     if DatabaseType is not None:    # Use the database tables
-        dfLocality = pd.read_sql_query(text('SELECT locality_pid, locality_name, state_pid, \'P\' as alias FROM LOCALITY UNION SELECT locality_pid, name as locality_name, state_pid, \'A\' as alias FROM LOCALITY_ALIAS'), engine.connect())
+        dfLocality = pd.read_sql_query(text('SELECT locality_pid, date_retired, locality_name, state_pid, primary_postcode, \'P\' as alias FROM LOCALITY UNION SELECT locality_pid, date_retired, name as locality_name, state_pid, postcode, \'A\' as alias FROM LOCALITY_ALIAS'), engine.connect())
         results = dfLocality.values.tolist()
-        for (locality_pid, suburb, state_pid, alias) in results:
-            subs.append([locality_pid, cleanText(suburb, True), state_pid, alias])
+        for (locality_pid, date_retired, suburb, state_pid, postcode, alias) in results:
+            if date_retired is not None:
+                continue
+            addLocality(this, locality_pid, suburb, postcode, state_pid, alias)
     elif GNAFdir is not None:       # Use the standard G-NAF CSV files
         # LOCALITY_PID|DATE_CREATED|DATE_RETIRED|LOCALITY_NAME|PRIMARY_POSTCODE|LOCALITY_CLASS_CODE|STATE_PID|GNAF_LOCALITY_PID|GNAF_RELIABILITY_CODE
         for SandT in SandTs:
-            with open(os.path.join(GNAFdir, SandT + '_LOCALITY_psv.psv'), 'rt', newline='', encoding='utf-8') as suburbFile:
+            with open(os.path.join(GNAFdir, 'Standard', SandT + '_LOCALITY_psv.psv'), 'rt', newline='', encoding='utf-8') as suburbFile:
                 suburbReader = csv.DictReader(suburbFile, dialect=csv.excel, delimiter='|')
                 for rrow in suburbReader:
                     if rrow['DATE_RETIRED'] != '':        # Skip if retired
@@ -1010,12 +1031,12 @@ def initData(this):
                     addLocality(this, localityPid, suburb, postcode, statePid, 'P')
         # LOCALITY_ALIAS_PID|DATE_CREATED|DATE_RETIRED|LOCALITY_PID|NAME|POSTCODE|ALIAS_TYPE_CODE|STATE_PID
         for SandT in SandTs:
-            with open(os.path.join(GNAFdir, SandT + '_LOCALITY_ALIAS_psv.psv'), 'rt', newline='', encoding='utf-8') as suburbFile:
+            with open(os.path.join(GNAFdir, 'Standard', SandT + '_LOCALITY_ALIAS_psv.psv'), 'rt', newline='', encoding='utf-8') as suburbFile:
                 suburbReader = csv.DictReader(suburbFile, dialect=csv.excel, delimiter='|')
                 for rrow in suburbReader:
                     if rrow['DATE_RETIRED'] != '':        # Skip if retired
                         continue
-                    localityPid = rrow['LOCALITY_ALIAS_PID']
+                    localityPid = rrow['LOCALITY_PID']
                     suburb = cleanText(rrow['NAME'], True)
                     postcode = rrow['POSTCODE']
                     statePid = rrow['STATE_PID']
@@ -1050,7 +1071,10 @@ def initData(this):
                 longitude = rrow['longitude']
                 latitude = rrow['latitude']
                 addSuburb(this, localityPid, statePid, suburb, alias, sa1, lga, latitude, longitude)
-    this.logger.info('suburb and locality data fetched')
+    suburbCount = 0
+    for soundCode, suburbList in suburbs.items():
+        suburbCount += len(suburbList)
+    this.logger.info('%d suburbs and %d localities fetched', suburbCount, len(localities))
 
     # Read in street data
     this.logger.info('Fetching street names data')
@@ -1072,7 +1096,7 @@ def initData(this):
     elif GNAFdir is not None:       # Use the standard G-NAF PSV files
         # STREET_LOCALITY_PID|DATE_CREATED|DATE_RETIRED|STREET_CLASS_CODE|STREET_NAME|STREET_TYPE_CODE|STREET_SUFFIX_CODE|LOCALITY_PID|GNAF_STREET_PID|GNAF_STREET_CONFIDENCE|GNAF_RELIABILITY_CODE
         for SandT in SandTs:
-            with open(os.path.join(GNAFdir, SandT + '_STREET_LOCALITY_psv.psv'), 'rt', newline='', encoding='utf-8') as streetFile:
+            with open(os.path.join(GNAFdir, 'Standard', SandT + '_STREET_LOCALITY_psv.psv'), 'rt', newline='', encoding='utf-8') as streetFile:
                 streetReader = csv.DictReader(streetFile, dialect=csv.excel, delimiter='|')
                 for rrow in streetReader:
                     if rrow['DATE_RETIRED'] != '':        # Skip if retired
@@ -1086,12 +1110,12 @@ def initData(this):
 
         # STREET_LOCALITY_ALIAS_PID|DATE_CREATED|DATE_RETIRED|STREET_LOCALITY_PID|STREET_NAME|STREET_TYPE_CODE|STREET_SUFFIX_CODE|ALIAS_TYPE_CODE
         for SandT in SandTs:
-            with open(os.path.join(DataDir, SandT + '_STREET_LOCALITY_ALIAS_psv.psv'), 'rt', newline='', encoding='utf-8') as streetFile:
+            with open(os.path.join(GNAFdir, 'Standard', SandT + '_STREET_LOCALITY_ALIAS_psv.psv'), 'rt', newline='', encoding='utf-8') as streetFile:
                 streetReader = csv.DictReader(streetFile, dialect=csv.excel, delimiter='|')
                 for rrow in streetReader:
                     if rrow['DATE_RETIRED'] != '':        # Skip if retired
                         continue
-                    streetPid = rrow['STREET_LOCALITY_ALIAS_PID']
+                    streetPid = rrow['STREET_LOCALITY_PID']
                     streetName = cleanText(rrow['STREET_NAME'], True)
                     streetType = cleanText(rrow['STREET_TYPE_CODE'], True)
                     streetSuffix = cleanText(rrow['STREET_SUFFIX_CODE'], True)
@@ -1123,46 +1147,61 @@ def initData(this):
                     continue
                 localityPid = streetNames[streetPid][0][3]
                 addStreetName(this, streetPid, streetName, streetType, streetSuffix, localityPid, 'A')
-    this.logger.info('street names data fetched')
+    streetCount = 0
+    for street_pid, namesList in streetNames.items():
+        streetCount += len(namesList)
+    this.logger.info('%d street names fetched', streetCount)
 
     # Read in street SA1/LGA data
     this.logger.info('Fetching street SA1/LGA data')
     # street_locality_pid|SA1_MAINCODE_2016|LGA_CODE_2020|longitude|latitude
+    streetCount = 0
     with open(os.path.join(DataDir, 'street_SA1LGA.psv'), 'rt', newline='', encoding='utf-8') as SA1LGAfile:
         SA1LGAreader = csv.DictReader(SA1LGAfile, dialect=csv.excel, delimiter='|')
         for rrow in SA1LGAreader:
+            streetCount += 1
             streetPid = rrow['street_locality_pid']
             sa1 = rrow['SA1_MAINCODE_2016']
             lga = rrow['LGA_CODE_2020']
             longitude = rrow['longitude']
             latitude = rrow['latitude']
             addStreet(this, streetPid, sa1, lga, latitude, longitude)
-    this.logger.info('street SA1/LGA data fetched')
+    this.logger.info('%d street SA1s/LGAs fetched', streetCount)
 
     # Read in street numbers
     this.logger.info('Fetching street numbers')
     if DatabaseType is not None:    # Use the database tables
         # We need some mesh block stuff
         addressMB = {}
-        dfMB = pd.read_sql_query(text('SELECT address_detail_pid, mb_2016_pid FROM ADDRESS_MESH_BLOCK_2016'), engine.connect())
+        dfMB = pd.read_sql_query(text('SELECT address_detail_pid, mb_2016_pid FROM ADDRESS_MESH_BLOCK_2016 WHERE date_retired IS NULL'), engine.connect())
         results = dfMB.values.tolist()
         for (addressPid, mb_2016_pid) in results:
             addressMB[addressPid] = mb_2016_pid
         MB = {}
-        dfMB = pd.read_sql_query(text('SELECT mb_2016_pid, mb_2016_code FROM MB_2016'), engine.connect())
+        dfMB = pd.read_sql_query(text('SELECT mb_2016_pid, mb_2016_code FROM MB_2016 WHERE date_retired IS NULL'), engine.connect())
         results = dfMB.values.tolist()
         for (mb_2016_pid, mb_2016_code) in results:
             MB[mb_2016_pid] = mb_2016_code
 
+        # And some default geocode stuff
+        defaultGeocode = {}
+        dfMB = pd.read_sql_query(text('SELECT address_detail_pid, longitude, latitude FROM ADDRESS_DEFAULT_GEOCODE date_retired IS NULL'), engine.connect())
+        results = dfMB.values.tolist()
+        for (address_detail_pid, longitude, latitude) in results:
+            defaultGeocode[address_detail_pid] = (str(latitude), str(longitude))
+
+
         # And then the address details
-        dfAddr = pd.read_sql_query(text('SELECT address_detail_pid, building_name, lot_number, number_first, number_last, street_locality_pid, locality_pid, postcode, alias_principal, longitude, latitude FROM ADDRESS_VIEW WHERE confidence > 0'), engine.connect())
+        dfAddr = pd.read_sql_query(text('SELECT address_detail_pid, building_name, lot_number, number_first, number_last, street_locality_pid, locality_pid, postcode, alias_principal FROM ADDRESS_DETAIL WHERE confidence > 0 AND date_retired IS NULL'), engine.connect())
         results = dfAddr.values.tolist()
-        for (addressPid, buildingName, lotNumber, numberFirst, numberLast, streetPid, localityPid, postcode, alias, longitude, latitude) in results:
+        for (addressPid, buildingName, lotNumber, numberFirst, numberLast, streetPid, localityPid, postcode, alias) in results:
             mbCode = None
             if (addressPid in addressMB) and (addressMB[addressPid] in MB):
                 mbCode = MB[addressMB[addressPid]]
-            longitude = str(longitude)
-            latitude = str(latitude)
+            longitude = None
+            latitude = None
+            if addressPid in defaultGeocode:
+                latitude, longitude = defaultGeocode[addressPid]
             addStreetNumber(this, cleanText(buildingName, True), streetPid, localityPid, lotNumber, numberFirst, numberLast, mbCode, latitude, longitude, addressPid)
 
     elif GNAFdir is not None:       # Use the standard G-NAF PSV files
@@ -1170,7 +1209,7 @@ def initData(this):
         # ADDRESS_MESH_BLOCK_2016_PID|DATE_CREATED|DATE_RETIRED|ADDRESS_DETAIL_PID|MB_MATCH_CODE|MB_2016_PID
         addressMB = {}
         for SandT in SandTs:
-            with open(os.path.join(DataDir, SandT + '_ADDRESS_MESH_BLOCK_2016_psv.psv'), 'rt', newline='', encoding='utf-8') as mbFile:
+            with open(os.path.join(GNAFdir, 'Standard', SandT + '_ADDRESS_MESH_BLOCK_2016_psv.psv'), 'rt', newline='', encoding='utf-8') as mbFile:
                 mbReader = csv.DictReader(mbFile, dialect=csv.excel, delimiter='|')
                 for rrow in mbReader:
                     if rrow['DATE_RETIRED'] != '':        # Skip if retired
@@ -1179,7 +1218,7 @@ def initData(this):
         MB = {}
         # MB_2016_PID|DATE_CREATED|DATE_RETIRED|MB_2016_CODE
         for SandT in SandTs:
-            with open(os.path.join(DataDir, SandT + '_MB_2016_psv.psv'), 'rt', newline='', encoding='utf-8') as mbFile:
+            with open(os.path.join(GNAFdir, 'Standard', SandT + '_MB_2016_psv.psv'), 'rt', newline='', encoding='utf-8') as mbFile:
                 mbReader = csv.DictReader(mbFile, dialect=csv.excel, delimiter='|')
                 for rrow in mbReader:
                     if rrow['DATE_RETIRED'] != '':        # Skip if retired
@@ -1189,7 +1228,7 @@ def initData(this):
         defaultGeocode = {}
         # ADDRESS_DEFAULT_GEOCODE_PID|DATE_CREATED|DATE_RETIRED|ADDRESS_DETAIL_PID|GEOCODE_TYPE_CODE|LONGITUDE|LATITUDE
         for SandT in SandTs:
-            with open(os.path.join(GNAFdir, SandT + '_ADDRESS_DEFAULT_GEOCODE_psv.psv'), 'rt', newline='', encoding='utf-8') as defaultGeoFile:
+            with open(os.path.join(GNAFdir, 'Standard', SandT + '_ADDRESS_DEFAULT_GEOCODE_psv.psv'), 'rt', newline='', encoding='utf-8') as defaultGeoFile:
                 defaultGeoReader = csv.DictReader(defaultGeoFile, dialect=csv.excel, delimiter='|')
                 for rrow in defaultGeoReader:
                     if rrow['DATE_RETIRED'] != '':        # Skip if retired
@@ -1200,7 +1239,7 @@ def initData(this):
         # ADDRESS_DETAIL_PID|DATE_CREATED|DATE_LAST_MODIFIED|DATE_RETIRED|BUILDING_NAME|LOT_NUMBER_PREFIX|LOT_NUMBER|LOT_NUMBER_SUFFIX|FLAT_TYPE_CODE|FLAT_NUMBER_PREFIX|FLAT_NUMBER|FLAT_NUMBER_SUFFIX|LEVEL_TYPE_CODE|LEVEL_NUMBER_PREFIX|LEVEL_NUMBER|LEVEL_NUMBER_SUFFIX|NUMBER_FIRST_PREFIX|NUMBER_FIRST|NUMBER_FIRST_SUFFIX|NUMBER_LAST_PREFIX|NUMBER_LAST|NUMBER_LAST_SUFFIX|STREET_LOCALITY_PID|LOCATION_DESCRIPTION|LOCALITY_PID|ALIAS_PRINCIPAL|POSTCODE|PRIVATE_STREET|LEGAL_PARCEL_ID|CONFIDENCE|ADDRESS_SITE_PID|LEVEL_GEOCODED_CODE|PROPERTY_PID|GNAF_PROPERTY_PID|PRIMARY_SECONDARY
         # NOTE: ADDRESS_DETAIL contains a lot more than just postcodes, so we try and grab a much as we can in one pass
         for SandT in SandTs:
-            with open(os.path.join(GNAFdir, SandT + '_ADDRESS_DETAIL_psv.psv'), 'rt', newline='', encoding='utf-8') as addressFile:
+            with open(os.path.join(GNAFdir, 'Standard', SandT + '_ADDRESS_DETAIL_psv.psv'), 'rt', newline='', encoding='utf-8') as addressFile:
                 addressReader = csv.DictReader(addressFile, dialect=csv.excel, delimiter='|')
                 for rrow in addressReader:
                     if rrow['DATE_RETIRED'] != '':        # Skip if retired
@@ -1294,7 +1333,10 @@ def initData(this):
                 if addressPid in defaultGeocode:
                     latitude, longitude = defaultGeocode[addressPid]
                 addStreetNumber(this, buildingName, streetPid, localityPid, lotNumber, numberFirst, numberLast, mbCode, latitude, longitude, addressPid)
-    this.logger.info('street numbers fetched')
+    numbersCount = 0
+    for street_pid, numbersList in streetNos.items():
+        numbersCount += len(numbersList)
+    this.logger.info('%d street numbers fetched', numbersCount)
 
     this.logger.info('Fetching flats, units and trims')
     if DatabaseType is not None:    # Use the database tables
@@ -1313,7 +1355,7 @@ def initData(this):
                     levels.append(re.compile(r'\b' + cleanText(level, True) + r'( *' + deliveryNumber + r'\s*)'))
     elif GNAFdir is not None:       # Use the standard G-NAF PSV files
         # CODE|NAME|DESCRIPTION
-        with open(os.path.join(GNAFdir, 'Authority_Code_FLAT_TYPE_AUT_psv.psv'), 'rt', newline='', encoding='utf-8') as flatFile:
+        with open(os.path.join(GNAFdir, 'Authority Code', 'Authority_Code_FLAT_TYPE_AUT_psv.psv'), 'rt', newline='', encoding='utf-8') as flatFile:
             flatReader = csv.DictReader(flatFile, dialect=csv.excel, delimiter='|')
             for rrow in flatReader:
                 for flat in rrow.values():
@@ -1321,7 +1363,7 @@ def initData(this):
                         flats.append(re.compile(r'\b' + cleanText(flat, True) + r'( *' + deliveryNumber + r'\s*)'))
                         flats.append(re.compile(r'\b' + cleanText(flat, True) + r'S( *' + deliveryRange + r'\s*)'))
         # CODE|NAME|DESCRIPTION
-        with open(os.path.join(GNAFdir, 'Authority_Code_LEVEL_TYPE_AUT_psv.psv'), 'rt', newline='', encoding='utf-8') as levelFile:
+        with open(os.path.join(GNAFdir, 'Authority Code', 'Authority_Code_LEVEL_TYPE_AUT_psv.psv'), 'rt', newline='', encoding='utf-8') as levelFile:
             levelReader = csv.DictReader(levelFile, dialect=csv.excel, delimiter='|')
             for rrow in levelReader:
                 for level in rrow.values():
@@ -1360,7 +1402,7 @@ def initData(this):
                 for rrow in trimReader:
                     extraTrims.append(re.compile(r'\b' + cleanText(rrow['code'], True) + r'\s*'))
 
-    this.logger.info('flats, units and extra fetched')
+    this.logger.info('%d extra flats, units and trims fetched', len(extraTrims))
 
     this.logger.info('Fetching postal delivery services')
     # Use the  PSV files
@@ -1379,7 +1421,7 @@ def initData(this):
                     services.append([re.compile(r'\b' + code + r'( *' + deliveryNumber + r')?\s*'), cardinality])
                 else:
                     services.append([re.compile(r'\b' + code + r'( *' + deliveryNumber + r')\s*'), cardinality])
-    this.logger.info('postal delivery services fetched')
+    this.logger.info('%d postal delivery services fetched', len(services))
 
     this.logger.info('Fetching street types and street suffixes')
     if DatabaseType is not None:    # Use the database tables
@@ -1388,7 +1430,7 @@ def initData(this):
         for (code, name, description) in results:
             if code not in streetTypes:
                 streetTypes[code] = []
-            streetTypes[code].append(name)
+                streetTypes[code].append(name)
             streetTypes[code].append(re.compile(r'\b' + cleanText(code, True) + r'\b'))
             if name != code:
                 streetTypes[code].append(re.compile(r'\b' + cleanText(name, True) + r'\b'))
@@ -1406,19 +1448,19 @@ def initData(this):
                 streetSuffixes[code].append(re.compile(r'^' + cleanText(description, True) + r'\b'))
     elif GNAFdir is not None:       # Use the standard G-NAF PSV files
         # CODE|NAME|DESCRIPTION
-        with open(os.path.join(GNAFdir, 'Authority_Code_STREET_TYPE_AUT_psv.psv'), 'rt', newline='', encoding='utf-8') as sTypeFile:
+        with open(os.path.join(GNAFdir, 'Authority Code', 'Authority_Code_STREET_TYPE_AUT_psv.psv'), 'rt', newline='', encoding='utf-8') as sTypeFile:
             sTypeReader = csv.DictReader(sTypeFile, dialect=csv.excel, delimiter='|')
             for rrow in sTypeReader:
                 if rrow['CODE'] not in streetTypes:
                     streetTypes[rrow['CODE']] = []
-                    streetType[rrow['CODE']].append(rrow['NAME'])
-                streetTypes[rrow['CODE']].append(re.compile(r'^' + cleanText(rrow['CODE'], True) + r'\b'))
+                    streetTypes[rrow['CODE']].append(rrow['NAME'])
+                streetTypes[rrow['CODE']].append(re.compile(r'\b' + cleanText(rrow['CODE'], True) + r'\b'))
                 if rrow['NAME'] != rrow['CODE']:
-                    streetTypes[rrow['CODE']].append(re.compile(r'^' + cleanText(rrow['NAME'], True) + r'\b'))
+                    streetTypes[rrow['CODE']].append(re.compile(r'\b' + cleanText(rrow['NAME'], True) + r'\b'))
                 if (rrow['DESCRIPTION'] != rrow['CODE']) and (rrow['DESCRIPTION'] != rrow['NAME']):
-                    streetTypes[rrow['CODE']].append(re.compile(r'^' + cleanText(rrow['DESCRIPTION'], True) + r'\b'))
+                    streetTypes[rrow['CODE']].append(re.compile(r'\b' + cleanText(rrow['DESCRIPTION'], True) + r'\b'))
         # CODE|NAME|DESCRIPTION
-        with open(os.path.join(GNAFdir, 'Authority_Code_STREET_SUFFIX_AUT_psv.psv'), 'rt', newline='', encoding='utf-8') as sSuffixFile:
+        with open(os.path.join(GNAFdir, 'Authority Code', 'Authority_Code_STREET_SUFFIX_AUT_psv.psv'), 'rt', newline='', encoding='utf-8') as sSuffixFile:
             sSuffixReader = csv.DictReader(sSuffixFile, dialect=csv.excel, delimiter='|')
             for rrow in sSuffixReader:
                 if rrow['CODE'] not in streetSuffixes:
@@ -1453,6 +1495,23 @@ def initData(this):
                 if (rrow['DESCRIPTION'] != rrow['CODE']) and (rrow['DESCRIPTION'] != rrow['NAME']):
                     streetSuffixes[rrow['CODE']].append(re.compile(r'^' + cleanText(rrow['DESCRIPTION'], True) + r'\b'))
 
+    # Compute the street type sound codes
+    for streetType, streetTypeInfo in streetTypes.items():
+        soundCode = jellyfish.soundex(streetType)
+        if soundCode not in streetTypeSound:
+            streetTypeSound[soundCode] = []
+        streetTypeSound[soundCode].append(streetType)
+        soundCodeAbbrev = jellyfish.soundex(streetTypeInfo[0])
+        if soundCodeAbbrev != soundCode:
+            if soundCodeAbbrev not in streetTypeSound:
+                streetTypeSound[soundCodeAbbrev] = []
+            streetTypeSound[soundCodeAbbrev].append(streetType)
+    soundCodes = list(streetTypeSound)
+    for soundCode in soundCodes:       # Remove any non-unique ones - two or more different street types that sound the same
+        if len(streetTypeSound[soundCode]) > 1:
+            # this.logger.info('Deleting duplicate street type sound (%s) - %s', soundCode, streetTypeSound[soundCode])
+            del streetTypeSound[soundCode]
+
     # Read in any extra STREET_TYPEs - if required
     if addExtras:
         # streetType|abbrev
@@ -1477,7 +1536,7 @@ def initData(this):
                     if rrow['abbrev'] != rrow['streetSuffix']:
                         streetSuffixes[rrow['streetSuffix']].append(re.compile(r'^' + cleanText(rrow['abbrev'], True) + r'\b'))
 
-    this.logger.info('street types and street suffixes fetched')
+    this.logger.info('%d street types and %d street suffixes fetched', len(streetTypes), len(streetSuffixes))
 
 
     # Read in SA1 and LGA data
@@ -1520,7 +1579,7 @@ def initData(this):
             for rrow in mbReader:
                 LGAmap[rrow['MB_CODE_2016']] = rrow['LGA_CODE_2020']
 
-    this.logger.info('%d Mesh Block SA1 and LGA codes fetched', len(SA1map))
+    this.logger.info('%d Mesh Blocks and %d LGA codes fetched', len(SA1map), len(LGAmap))
 
     this.logger.info('Finished initializing data')
 
@@ -2385,19 +2444,20 @@ Check to see if any of the valid streets are in any of the valid suburbs
     this.logger.debug('validateStreets - have suburbs(%s)', repr(list(this.validSuburbs)))
 
     # Create the set of valid streets (streetPids) - all the streetPids from all the sources across all states and postcodes
-    allStreets = set()
-    this.allStreetSources = {}
+    allStreets = set()                  # The set of all valid streets (street pids)
+    this.allStreetSources = {}          # The 'street src' ~ 'suburb src' for each street pid
     for streetKey in this.validStreets:
         for src in ['G', 'GA', 'GS', 'GAS', 'GL', 'GAL']:
             if src in this.validStreets[streetKey]:
                 theseStreets = set(this.validStreets[streetKey][src])        # A set of streetPids
                 for streetPid in theseStreets:
-                    this.allStreetSources[streetPid] = src
+                    if streetPid not in this.allStreetSources:
+                        this.allStreetSources[streetPid] = src      # the best street source for this street
                 allStreets = allStreets.union(theseStreets)
     this.logger.debug('validateStreets - have streets(%s)', repr(allStreets))
 
     # Assemble all the validStreets in these suburbs
-    suburbStreets = set()
+    suburbStreets = set()           # The set of all valid streets in suburbs (street pids)
     for suburb in this.validSuburbs:        # All the valid suburbs
         this.logger.debug('validateStreets - checking suburb(%s)', suburb)
         for statePid in this.validSuburbs[suburb]:        # In every state
@@ -2777,31 +2837,33 @@ based upon this.fuzzLevel
             minLen = max(0, suburbLength - 2)
             maxLen = min(maxSuburbLen, suburbLength + 2)
             processed = set()
+            this.logger.debug('expandSuburbAndStreets - checking from %d to %d', minLen, maxLen - 1)
             for thisLen in range(minLen, maxLen):
                 if thisLen in suburbLen:
-                    for suburbInfo in suburbLen[thisLen]:
-                        soundCode = suburbInfo[0]
-                        otherSuburb = suburbInfo[1]
-                        if otherSuburb == suburb:
-                            continue
-                        if otherSuburb in processed:
-                            continue
-                        processed.add(otherSuburb)
-                        dist = jellyfish.levenshtein_distance(suburb, otherSuburb)
-                        if dist <= maxDist:
-                            if otherSuburb not in this.validSuburbs:
-                                this.validSuburbs[otherSuburb] = {}
-                                isAPI = this.validSuburbs[suburb]['SX'][1]
-                                this.validSuburbs[otherSuburb]['SX'] = [soundCode, isAPI]
-                            for statePid in suburbs[soundCode][otherSuburb]:
-                                if statePid not in this.validSuburbs[otherSuburb]:
-                                    this.validSuburbs[otherSuburb][statePid] = {}
-                                for src in suburbs[soundCode][otherSuburb][statePid]:
-                                    if src not in ['G', 'GA']:            # Only use a G-NAF primary source
-                                        continue
-                                    if src not in this.validSuburbs[otherSuburb][statePid]:
-                                        this.validSuburbs[otherSuburb][statePid][src + 'L'] = suburbs[soundCode][otherSuburb][statePid][src]
+                    for soundCode in suburbLen[thisLen]:
+                        for otherSuburb in suburbLen[thisLen][soundCode]:
+                            this.logger.debug('expandSuburbAndStreets - checking %s with %s', suburb, otherSuburb)
+                            if otherSuburb == suburb:
+                                continue
+                            if otherSuburb in processed:
+                                continue
+                            processed.add(otherSuburb)
+                            dist = jellyfish.levenshtein_distance(suburb, otherSuburb)
+                            if dist <= maxDist:
+                                if otherSuburb not in this.validSuburbs:
+                                    this.validSuburbs[otherSuburb] = {}
+                                    isAPI = this.validSuburbs[suburb]['SX'][1]
+                                    this.validSuburbs[otherSuburb]['SX'] = [soundCode, isAPI]
+                                for statePid in suburbs[soundCode][otherSuburb]:
+                                    if statePid not in this.validSuburbs[otherSuburb]:
+                                        this.validSuburbs[otherSuburb][statePid] = {}
+                                    for src in suburbs[soundCode][otherSuburb][statePid]:
+                                        if src not in ['G', 'GA']:            # Only use a G-NAF primary source
+                                            continue
+                                        if src not in this.validSuburbs[otherSuburb][statePid]:
+                                            this.validSuburbs[otherSuburb][statePid][src + 'L'] = suburbs[soundCode][otherSuburb][statePid][src]
         # Add Levenshtein Distance suburbs to this.validSuburbs for all foundTextSuburbs, if not already in this.validSuburb
+        this.logger.debug('exandSuburbAndStreets - checking %s', this.foundSuburbText)
         for suburb in this.foundSuburbText:
             if suburb in this.validSuburbs:
                 continue
@@ -2810,30 +2872,31 @@ based upon this.fuzzLevel
             minLen = max(0, suburbLength - 2)
             maxLen = min(maxSuburbLen, suburbLength + 2)
             processed = set()
+            this.logger.debug('expandSuburbAndStreets - checking from %d to %d', minLen, maxLen - 1)
             for thisLen in range(minLen, maxLen):
                 if thisLen in suburbLen:
-                    for suburbInfo in suburbLen[thisLen]:
-                        soundCode = suburbInfo[0]
-                        otherSuburb = suburbInfo[1]
-                        if otherSuburb == suburb:
-                            continue
-                        if otherSuburb in processed:
-                            continue
-                        processed.add(otherSuburb)
-                        dist = jellyfish.levenshtein_distance(suburb, otherSuburb)
-                        if dist <= maxDist:
-                            if otherSuburb not in this.validSuburbs:
-                                this.validSuburbs[otherSuburb] = {}
-                                isAPI = this.foundSuburbText[suburb]
-                                this.validSuburbs[otherSuburb]['SX'] = [soundCode, isAPI]
-                            for statePid in suburbs[soundCode][otherSuburb]:
-                                if statePid not in this.validSuburbs[otherSuburb]:
-                                    this.validSuburbs[otherSuburb][statePid] = {}
-                                for src in suburbs[soundCode][otherSuburb][statePid]:
-                                    if src not in ['G', 'GA']:            # Only use a G-NAF primary source
-                                        continue
-                                    if src not in this.validSuburbs[otherSuburb][statePid]:
-                                        this.validSuburbs[otherSuburb][statePid][src + 'L'] = suburbs[soundCode][otherSuburb][statePid][src]
+                    for soundCode in suburbLen[thisLen]:
+                        for otherSuburb in suburbLen[thisLen][soundCode]:
+                            this.logger.debug('expandSuburbAndStreets - checking %s with %s', suburb, otherSuburb)
+                            if otherSuburb == suburb:
+                                continue
+                            if otherSuburb in processed:
+                                continue
+                            processed.add(otherSuburb)
+                            dist = jellyfish.levenshtein_distance(suburb, otherSuburb)
+                            if dist <= maxDist:
+                                if otherSuburb not in this.validSuburbs:
+                                    this.validSuburbs[otherSuburb] = {}
+                                    isAPI = this.foundSuburbText[suburb]
+                                    this.validSuburbs[otherSuburb]['SX'] = [soundCode, isAPI]
+                                for statePid in suburbs[soundCode][otherSuburb]:
+                                    if statePid not in this.validSuburbs[otherSuburb]:
+                                        this.validSuburbs[otherSuburb][statePid] = {}
+                                    for src in suburbs[soundCode][otherSuburb][statePid]:
+                                        if src not in ['G', 'GA']:            # Only use a G-NAF primary source
+                                            continue
+                                        if src not in this.validSuburbs[otherSuburb][statePid]:
+                                            this.validSuburbs[otherSuburb][statePid][src + 'L'] = suburbs[soundCode][otherSuburb][statePid][src]
         bestSuburb(this)        # Compute the best suburbs
     elif this.fuzzLevel == 6:
         # Add the streets in neighbouring suburbs to the streets in this.validSuburbs for this state
@@ -2862,7 +2925,7 @@ based upon this.fuzzLevel
                 for src in this.parkedWrongPostcode[thisLevel][streetKey]:
                     if src not in this.validStreets[streetKey]:
                         this.validStreets[streetKey][src] = {}
-                    this.logger.debug('fuzzLevel 6 - adding back (wrong postcode) street(%s), source(%s), places(%s)',
+                    this.logger.debug('fuzzLevel 7 - adding back (wrong postcode) street(%s), source(%s), places(%s)',
                                      streetKey, src, repr(this.parkedWrongPostcode[thisLevel][streetKey][src]))
                     this.validStreets[streetKey][src].update(this.parkedWrongPostcode[thisLevel][streetKey][src])
     elif this.fuzzLevel == 8:
@@ -3021,7 +3084,10 @@ Set up the return data with the geocoding for this.houseNo in this street
             postcode = None
             statePid = None
             if locality in localityPostcodes:
-                postcode = list(localityPostcodes[locality])[0]
+                if (this.validPostcode is not None) and (this.validPostcode in localityPostcodes[locality]):
+                    postcode = this.validPostcode
+                else:
+                    postcode = list(localityPostcodes[locality])[0]
                 this.logger.debug('returnHouse - postcode [from localityPostcodes] for locality(%s) is (%s)', locality, postcode)
             this.logger.debug('returnHouse - there are %d options for locality(%s)', len(localities[locality]), locality)
             for loc in localities[locality]:
@@ -3117,7 +3183,10 @@ Set up the return data with the geocoding for this street
             suburb = None
             postcode = None
             if locality in localityPostcodes:
-                postcode = list(localityPostcodes[locality])[0]
+                if (this.validPostcode is not None) and (this.validPostcode in localityPostcodes[locality]):
+                    postcode = this.validPostcode
+                else:
+                    postcode = list(localityPostcodes[locality])[0]
             for localityInfo in localities[locality]:
                 if localityInfo[2] == 'P':        # Go for the first primary locality
                     statePid = localityInfo[0]
@@ -3536,6 +3605,33 @@ The accuracy is
         this.logger.info('Street name (%s %s), extraText (%s)', this.streetName, this.streetType, extraText)
     elif streetAt is not None:
         this.logger.info('Street name (%s), extraText (%s)', this.streetName, extraText)
+    else:               # Scan for a word that sounds like a street type
+        this.logger.debug('No street type/street name found - scanning for sounds like street types')
+        words = addressLine.split(' ')
+        if len(words) > 2:
+            at = 0
+            for ii in range(1, len(words) -1 ):
+                at += len(words[ii - 1]) + 1
+                soundCode = jellyfish.soundex(words[ii])
+                if soundCode in streetTypeSound:
+                    streetType = streetTypeSound[soundCode][0]
+                    if (this.streetType is None) or (this.streetType not in streetTypeCount) or (streetType not in streetTypeCount):
+                        this.streetType = streetType
+                        streetTypeAt = at
+                        streetTypeEnd = at + len(words[ii])
+                    elif streetTypeCount[streetType] >= streetTypeCount[this.streetType]:
+                        this.streetType = streetType
+                        streetTypeAt = at
+                        streetTypeEnd = at + len(words[ii])
+        if streetTypeAt is not None:
+            this.streetName = addressLine[:streetTypeAt].strip()
+            if this.streetName == '':
+                this.streetName = None
+            extraText = addressLine[streetTypeEnd:].strip()
+            this.logger.info('Street name (%s %s), extraText (%s)', this.streetName, this.streetType, extraText)
+        else:
+            this.logger.info('No street type/street name found')
+
 
     # Check extraText for streetSuffix
     if extraText != '':
@@ -3597,6 +3693,8 @@ The accuracy is
     this.parkedWrongPostcode = {}
     createValidStreets(this)
 
+    streetFound = None
+    bestStreetPid = None
     for thisFuzz in fuzzLevels:
         this.fuzzLevel = thisFuzz
         this.result['fuzzLevel'] = thisFuzz
@@ -3610,13 +3708,26 @@ The accuracy is
         streetFound = validateStreets(this)
 
         if streetFound:
-            this.logger.debug('street found')
-            streetPid = list(this.subsetValidStreets)[0]
-            # Check the house number if we have one
-            if this.houseNo is None:
-                streetPid = list(this.subsetValidStreets)[0]
-                returnStreetPid(this, streetPid)
-                return
+            # Pick the best street from this.allStreetSources
+            bestStreetPid = None
+            bestWeight = None
+            for streetPid in this.subsetValidStreets:
+                srcs = this.allStreetSources[streetPid].split('~')
+                if srcs[0] not in suburbSourceWeight:
+                    continue
+                if srcs[1] not in streetSourceWeight:
+                    continue
+                weight = 5 * suburbSourceWeight[srcs[0]] + 10 * streetSourceWeight[srcs[1]]
+                if (bestWeight is None) or (bestWeight < weight):        # We found a better street
+                    bestWeight = weight
+                    bestStreetPid = streetPid
+            if bestStreetPid is not None:
+                streetPid = bestStreetPid
+                this.logger.debug('street found: %s', streetPid)
+                # Check the house number if we have one
+                if this.houseNo is None:
+                    returnStreetPid(this, streetPid)
+                    return
 
             '''
             Check house number - as we have some candidate streets
@@ -3792,8 +3903,11 @@ The accuracy is
                 setupAddress1Address2(this)
             return
     else:
-        # We have streets within suburbs - return the first one - it's a guess
-        streetPid = list(this.subsetValidStreets)[0]
+        if not streetFound or bestStreetPid is None:
+            # We have streets within suburbs - return the first one - it's a guess
+            streetPid = list(this.subsetValidStreets)[0]
+        else:
+            streetPid = bestStreetPid
         returnStreetPid(this, streetPid)
     return
 

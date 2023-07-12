@@ -200,7 +200,7 @@ fi
 # Create the address_default_geocode.psv file
 if test -f "address_default_geocode.psv"
 then
-	echo "temporary file address_default_geocode.psv already created"
+	echo "address_default_geocode.psv already created"
 else
 	echo "creating address_default_geocode.psv"
 	python3 csvFind.py -c notRetired "${GNAFdir}/Standard/ACT_ADDRESS_DEFAULT_GEOCODE_psv.psv" | python3 csvExtract.py -c ADDRESS_DEFAULT_GEOCODE > address_default_geocode.psv

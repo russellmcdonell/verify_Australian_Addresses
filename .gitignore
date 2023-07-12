@@ -2,6 +2,7 @@
 *_psv.psv
 *.ipynb
 *.swp
+tmp/*
 data/*.csv
 data/*.psv
 tools/*.csv
@@ -9,6 +10,12 @@ tools/*.psv
 backup/*
 testoutput/*
 testlogs/*
+testGoutput/*
+testGlogs/*
+testMSSQLoutput/*
+testMSSQLlogs/*
+testMySQLoutput/*
+testMySQLlogs/*
 ABS/MB/*.csv
 ABS/SA1/*.csv
 ABS/SA1/*.dbf
