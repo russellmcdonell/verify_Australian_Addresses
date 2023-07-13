@@ -99,7 +99,11 @@ then
 	echo "neighbours.psv already created"
 else
 	echo "creating neighbours.psv"
-	python3 getNeighbour.py -G "${GNAFdir}"
+	python3 csvFind.py -c notRetired "${GNAFdir}/Standard/ACT_LOCALITY_NEIGHBOUR_psv.psv" | python3 csvExtract.py -c NEIGHBOUR > neighbours.psv
+	for i in NSW NT OT QLD SA TAS VIC WA
+	do
+		python3 csvFind.py -c notRetired "${GNAFdir}/Standard/${i}_LOCALITY_NEIGHBOUR_psv.psv" | python3 csvExtract.py -s -c NEIGHBOUR >> neighbours.psv
+	done
 fi
 
 # Create the locality_SA1LGA.psv file
