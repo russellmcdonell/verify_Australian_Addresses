@@ -2352,8 +2352,10 @@ Add sources to this.validStreet for streets in this.validState and this.validPos
                         this.parkedWrongState[this.fuzzLevel][streetKey] = {}
                     if src not in this.parkedWrongState[this.fuzzLevel][streetKey]:
                         this.parkedWrongState[this.fuzzLevel][streetKey][src] = {}
+                    '''
                     this.logger.debug('addSources - parking (wrong state) street(%s), source(%s), streetPid(%s), place(%s)',
                                       streetKey, src, streetPid, repr(places[streetPid]))
+                    '''
                     this.parkedWrongState[this.fuzzLevel][streetKey][src][streetPid] = places[streetPid]
                     del places[streetPid]        # And remove it from places
         if this.validPostcode is not None:
@@ -2374,8 +2376,10 @@ Add sources to this.validStreet for streets in this.validState and this.validPos
                         this.parkedWrongPostcode[this.fuzzLevel][streetKey] = {}
                     if src not in this.parkedWrongPostcode[this.fuzzLevel][streetKey]:
                         this.parkedWrongPostcode[this.fuzzLevel][streetKey][src] = {}
+                    '''
                     this.logger.debug('addSources - parking (wrong postcode) street(%s), source(%s), streetPid(%s), place(%s)',
                                      streetKey, src, streetPid, repr(places[streetPid]))
+                    '''
                     this.parkedWrongPostcode[this.fuzzLevel][streetKey][src][streetPid] = places[streetPid]
                     del places[streetPid]        # And remove it from places
         # Check if any places left
@@ -2495,13 +2499,13 @@ Check to see if any of the valid streets are in any of the valid suburbs
         for statePid in this.validSuburbs[suburb]:        # In every state
             if statePid == 'SX':
                 continue
-            this.logger.debug('validateStreets - checking statePid(%s) for suburb(%s)', statePid, suburb)
+            # this.logger.debug('validateStreets - checking statePid(%s) for suburb(%s)', statePid, suburb)
             for src in ['G', 'GA', 'GS', 'GAS', 'GL', 'GAL', 'GN']:            # That is a G-NAF source
-                this.logger.debug('validateStreets - checking source(%s)', src)
+                # this.logger.debug('validateStreets - checking source(%s)', src)
                 if src in this.validSuburbs[suburb][statePid]:        # From every source
-                    this.logger.debug('validateStreets - checking source(%s) for suburb(%s)', src, suburb)
+                    # this.logger.debug('validateStreets - checking source(%s) for suburb(%s)', src, suburb)
                     for localityPid in this.validSuburbs[suburb][statePid][src]:
-                        this.logger.debug('validateStreets - checking locality(%s) for source(%s) for suburb(%s)', localityPid, src, suburb)
+                        # this.logger.debug('validateStreets - checking locality(%s) for source(%s) for suburb(%s)', localityPid, src, suburb)
                         if localityPid in localityStreets:            # Does this locality have any streets
                             this.logger.debug('validateStreets - has streets(%s)', repr(sorted(localityStreets[localityPid])))
                             theseStreets = allStreets.intersection(localityStreets[localityPid])
@@ -2580,8 +2584,8 @@ Check if this.houseNo is in any of the streets in this.subsetValidStreets
             minHouse = houseNum - 3
             maxHouse = houseNum + 3
             houseStep = 1
-        this.logger.debug('checkHouseNo - checking street(%s) from (%d) to (%d) in steps of (%d)', streetPid, minHouse, maxHouse, houseStep)
-        this.logger.debug('checkHouseNo - (%s)', repr(sorted(streetNos[streetPid])))
+        # this.logger.debug('checkHouseNo - checking street(%s) from (%d) to (%d) in steps of (%d)', streetPid, minHouse, maxHouse, houseStep)
+        # this.logger.debug('checkHouseNo - (%s)', repr(sorted(streetNos[streetPid])))
         for thisHouse in range(minHouse, maxHouse, houseStep):
             if thisHouse in streetNos[streetPid]:
                 if this.isLot:        # We are looking for LOT numbers
@@ -2912,12 +2916,12 @@ based upon this.fuzzLevel
             minLen = max(0, suburbLength - 2)
             maxLen = min(maxSuburbLen, suburbLength + 2)
             processed = set()
-            this.logger.debug('expandSuburbAndStreets - checking from %d to %d', minLen, maxLen - 1)
+            # this.logger.debug('expandSuburbAndStreets - checking from %d to %d', minLen, maxLen - 1)
             for thisLen in range(minLen, maxLen):
                 if thisLen in suburbLen:
                     for soundCode in suburbLen[thisLen]:
                         for otherSuburb in suburbLen[thisLen][soundCode]:
-                            this.logger.debug('expandSuburbAndStreets - checking %s with %s', suburb, otherSuburb)
+                            # this.logger.debug('expandSuburbAndStreets - checking %s with %s', suburb, otherSuburb)
                             if otherSuburb == suburb:
                                 continue
                             if otherSuburb in processed:
