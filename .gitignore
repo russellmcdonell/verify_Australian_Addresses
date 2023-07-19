@@ -1,6 +1,7 @@
 .vscode
 *_psv.psv
 *.ipynb
+*.pyc
 *.swp
 tmp/*
 data/*.csv

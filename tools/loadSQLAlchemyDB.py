@@ -58,6 +58,7 @@ from sqlalchemy import create_engine, MetaData
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import OperationalError
 from sqlalchemy_utils import database_exists
+import defineSQLAlchemyDB as dbConfig
 
 # This next section is plagurised from /usr/include/sysexits.h
 EX_OK = 0        # successful termination
@@ -202,7 +203,7 @@ if __name__ == '__main__':
     if databaseType == 'MSSQL':
         engine = create_engine(connectionString, use_setinputsizes=False, echo=True)
     else:
-        engine = create_engine(connectionString, echo=True)
+        engine = create_engine(connectionString, echo=True, pool_pre_ping=True)
 
     # Check if the database exists
     if not database_exists(engine.url):
@@ -260,7 +261,7 @@ if __name__ == '__main__':
         tablename = filename[15:-8]
         dtypes = {}
         logging.info('Deleting rows from %s', tablename)
-        table = metadata.tables[tablename]
+        table = dbConfig.Base.metadata.tables[tablename]
         with Session() as session:      # Delete all the rows
             deleteRows = session.query(table).delete()
             session.commit()
@@ -308,7 +309,7 @@ if __name__ == '__main__':
     for phase in range(5):
         for tablename, filename in filePhases[phase]:
             dtypes = {}
-            table = metadata.tables[tablename]
+            table = dbConfig.Base.metadata.tables[tablename]
             for column in table.columns:
                 if column.type.python_type is decimal.Decimal:
                     dtypes[column.name] = float
@@ -321,7 +322,6 @@ if __name__ == '__main__':
             for column in table.columns:        # Drop any rows where the primary key is null
                 if column.primary_key:
                     df = df.dropna(subset=[column.name.upper()])
-            logging.info("Loading table %s, from file %s", tablename, filename)
             try:
                 df.to_sql(tablename, con=engine, index=False, if_exists='append')
             except Exception as e:

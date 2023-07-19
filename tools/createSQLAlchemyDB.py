@@ -9,6 +9,7 @@ $ python createSQLAlchemyDB.py
                          [-D databaseType|--databaseType=databaseType]
                          [-u username|--username=username] [-p password|--password=password]
                          [-s Server|--Server=Server] [-d databaseName|--databaseName=databaseName]
+                         [-N|--noKeys]
                          [-v loggingLevel|--verbose=logingLevel] [-L logDir|--logDir=logDir] [-l logfile|--logfile=logfile]
 
 REQUIRED
@@ -29,6 +30,9 @@ The address of the database server
 -d databaseName|--databaseName=databaseName]
 The name of the database
 
+-N|--noKeys
+Create the tables with no primary keys and no foreign keys
+
 -v loggingLevel|--verbose=loggingLevel
 Set the level of logging that you want (defaut INFO).
 
@@ -46,7 +50,7 @@ import argparse
 import logging
 import collections
 import json
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, MetaData, Table, Column
 from sqlalchemy.exc import OperationalError
 from sqlalchemy_utils import database_exists
 import defineSQLAlchemyDB as dbConfig
@@ -91,6 +95,7 @@ if __name__ == '__main__':
     parser.add_argument('-p', '--password', dest='password', help='The user password required to access the database')
     parser.add_argument('-s', '--server', dest='server', help='The address of the database server')
     parser.add_argument('-d', '--databaseName', dest='databaseName', help='The name of the database')
+    parser.add_argument('-N', '--noKeys', dest='noKeys', action='store_true', help='Create the tables with no primary/foreign keys')
     parser.add_argument('-v', '--verbose', dest='verbose', type=int, choices=list(range(0, 5)),
                         help='The level of logging\n\t0=CRITICAL,1=ERROR,2=WARNING,3=INFO,4=DEBUG')
     parser.add_argument('-L', '--logDir', dest='logDir', default='.', help='The name of a logging directory')
@@ -104,6 +109,7 @@ if __name__ == '__main__':
     password = args.password
     server = args.server
     databaseName = args.databaseName
+    noKeys = args.noKeys
     logDir = args.logDir
     logFile = args.logFile
     loggingLevel = args.verbose
@@ -211,9 +217,24 @@ if __name__ == '__main__':
         logging.shutdown()
         sys.exit(EX_UNAVAILABLE)
 
+    # If noKeys then remove indexes and foreign key contraints
+    if noKeys:
+        newMetaData = MetaData()
+        for thisTable in dbConfig.Base.metadata.tables:
+            newTable = Table(thisTable, newMetaData)
+            for column in dbConfig.Base.metadata.tables[thisTable].columns:
+                newName = column.name
+                newType = column.type
+                if column.primary_key:
+                    newTable.append_column(Column(newName, newType, nullable=False))
+                else:
+                    newTable.append_column(Column(newName, newType))
+    else:
+        newMetaData = dbConfig.Base.metadata
+
     # Create all the tables
     try:
-        dbConfig.Base.metadata.create_all(engine, dbConfig.Base.metadata.tables.values())
+        newMetaData.create_all(engine, newMetaData.tables.values())
     except Exception as e:
         print('Exception:', e)
         logging.shutdown()

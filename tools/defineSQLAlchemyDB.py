@@ -9,6 +9,7 @@ import datetime
 from sqlalchemy import String, Date, Numeric, ForeignKey, ForeignKeyConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+
 class Base(DeclarativeBase):
     pass
 
@@ -21,7 +22,7 @@ class ADDRESS_ALIAS(Base):
     alias_pid:Mapped[str] = mapped_column(ForeignKey('ADDRESS_DETAIL.address_detail_pid'), nullable = True)
     alias_type_code:Mapped[str] = mapped_column(ForeignKey('ADDRESS_ALIAS_TYPE_AUT.code'), nullable = True)
     alias_comment:Mapped[str] = mapped_column(String(200), nullable = True)
-    __table_args = (
+    __table_args__ = (
         ForeignKeyConstraint(['alias_pid'], ['ADDRESS_DETAIL.address_detail_pid'], name='ADDRESS_ALIAS_FK1'),
         ForeignKeyConstraint(['alias_type_code'], ['ADDRESS_ALIAS_TYPE_AUT.code'], name='ADDRESS_ALIAS_FK2'),
         ForeignKeyConstraint(['principal_pid'], ['ADDRESS_DETAIL.address_detail_pid'], name='ADDRESS_ALIAS_FK3'),
@@ -51,7 +52,7 @@ class ADDRESS_DEFAULT_GEOCODE(Base):
     geocode_type_code:Mapped[str] = mapped_column(ForeignKey('GEOCODE_TYPE_AUT.code'), nullable = True)
     longitude:Mapped[float] = mapped_column(Numeric(11, 8), nullable = True)
     latitude:Mapped[float] = mapped_column(Numeric(10, 8), nullable = True)
-    __table_args = (
+    __table_args__ = (
         ForeignKeyConstraint(['address_detail_pid'], ['ADDRESS_DETAIL.address_detail_pid'], name='ADDRESS_DEFAULT_GEOCODE_FK1'),
         ForeignKeyConstraint(['geocode_type_code'], ['GEOCODE_TYPE_AUT.code'], name='ADDRESS_DEFAULT_GEOCODE_FK2'),
     )
@@ -94,7 +95,7 @@ class ADDRESS_DETAIL(Base):
     property_pid:Mapped[str] = mapped_column(String(15), nullable = True)
     gnaf_property_pid:Mapped[str] = mapped_column(String(15), nullable = True)
     primary_secondary:Mapped[str] = mapped_column(String(1), nullable = True)
-    __table_args = (
+    __table_args__ = (
         ForeignKeyConstraint(['address_site_pid'], ['ADDRESS_SITE.address_site_pid'], name='ADDRESS_DETAIL_FK1'),
         ForeignKeyConstraint(['flat_type_code'], ['FLAT_TYPE_AUT.code'], name='ADDRESS_DETAIL_FK2'),
         ForeignKeyConstraint(['level_geocoded_code'], ['GEOCODED_LEVEL_TYPE_AUT.code'], name='ADDRESS_DETAIL_FK3'),
@@ -112,7 +113,7 @@ class ADDRESS_FEATURE(Base):
     date_address_detail_created:Mapped[datetime.date] = mapped_column(Date, nullable = True)
     date_address_detail_retired:Mapped[datetime.date] = mapped_column(Date, nullable = True)
     address_change_type_code:Mapped[str] = mapped_column(ForeignKey('ADDRESS_CHANGE_TYPE_AUT.code'), nullable = True)
-    __table_args = (
+    __table_args__ = (
         ForeignKeyConstraint(['address_change_type_code'], ['ADDRESS_CHANGE_TYPE_AUT.code'], name='ADDRESS_FEATURE_FK1'),
         ForeignKeyConstraint(['address_detail_pid'], ['ADDRESS_DETAIL.address_detail_pid'], name='ADDRESS_FEATURE_FK2'),
     )
@@ -126,7 +127,7 @@ class ADDRESS_MESH_BLOCK_2011(Base):
     address_detail_pid:Mapped[str] = mapped_column(ForeignKey('ADDRESS_DETAIL.address_detail_pid'), nullable = True)
     mb_match_code:Mapped[str] = mapped_column(ForeignKey('MB_MATCH_CODE_AUT.code'), nullable = True)
     mb_2011_pid:Mapped[str] = mapped_column(ForeignKey('MB_2011.mb_2011_pid'), nullable = True)
-    __table_args = (
+    __table_args__ = (
         ForeignKeyConstraint(['address_detail_pid'], ['ADDRESS_DETAIL.address_detail_pid'], name='ADDRESS_MESH_BLOCK_2011_FK1'),
         ForeignKeyConstraint(['mb_2011_pid'], ['MB_2011.mb_2011_pid'], name='ADDRESS_MESH_BLOCK_2011_FK2'),
         ForeignKeyConstraint(['mb_match_code'], ['MB_MATCH_CODE_AUT.code'], name='ADDRESS_MESH_BLOCK_2011_FK3'),
@@ -141,7 +142,7 @@ class ADDRESS_MESH_BLOCK_2016(Base):
     address_detail_pid:Mapped[str] = mapped_column(ForeignKey('ADDRESS_DETAIL.address_detail_pid'), nullable = True)
     mb_match_code:Mapped[str] = mapped_column(ForeignKey('MB_MATCH_CODE_AUT.code'), nullable = True)
     mb_2016_pid:Mapped[str] = mapped_column(ForeignKey('MB_2016.mb_2016_pid'), nullable = True)
-    __table_args = (
+    __table_args__ = (
         ForeignKeyConstraint(['address_detail_pid'], ['ADDRESS_DETAIL.address_detail_pid'], name='ADDRESS_MESH_BLOCK_2016_FK1'),
         ForeignKeyConstraint(['mb_2016_pid'], ['MB_2016.mb_2016_pid'], name='ADDRESS_MESH_BLOCK_2016_FK2'),
         ForeignKeyConstraint(['mb_match_code'], ['MB_MATCH_CODE_AUT.code'], name='ADDRESS_MESH_BLOCK_2016_FK3'),
@@ -155,7 +156,7 @@ class ADDRESS_SITE(Base):
     date_retired:Mapped[datetime.date] = mapped_column(Date, nullable = True)
     address_type:Mapped[str] = mapped_column(ForeignKey('ADDRESS_TYPE_AUT.code'), nullable = True)
     address_site_name:Mapped[str] = mapped_column(String(200), nullable = True)
-    __table_args = (
+    __table_args__ = (
         ForeignKeyConstraint(['address_type'], ['ADDRESS_TYPE_AUT.code'], name='ADDRESS_SITE_FK1'),
     )
 
@@ -175,7 +176,7 @@ class ADDRESS_SITE_GEOCODE(Base):
     elevation:Mapped[int] = mapped_column(Numeric(7), nullable = True)
     longitude:Mapped[float] = mapped_column(Numeric(11, 8), nullable = True)
     latitude:Mapped[float] = mapped_column(Numeric(10, 8), nullable = True)
-    __table_args = (
+    __table_args__ = (
         ForeignKeyConstraint(['address_site_pid'], ['ADDRESS_SITE.address_site_pid'], name='ADDRESS_SITE_GEOCODE_FK1'),
         ForeignKeyConstraint(['geocode_type_code'], ['GEOCODE_TYPE_AUT.code'], name='ADDRESS_SITE_GEOCODE_FK2'),
         ForeignKeyConstraint(['reliability_code'], ['GEOCODE_RELIABILITY_AUT.code'], name='ADDRESS_SITE_GEOCODE_FK3'),
@@ -235,7 +236,7 @@ class LOCALITY(Base):
     state_pid:Mapped[str] = mapped_column(ForeignKey('STATE.state_pid'), nullable = True)
     gnaf_locality_pid:Mapped[str] = mapped_column(String(15), nullable = True)
     gnaf_reliability_code:Mapped[int] = mapped_column(ForeignKey('GEOCODE_RELIABILITY_AUT.code'), nullable = True)
-    __table_args = (
+    __table_args__ = (
         ForeignKeyConstraint(['gnaf_reliability_code'], ['GEOCODE_RELIABILITY_AUT.code'], name='LOCALITY_FK1'),
         ForeignKeyConstraint(['locality_class_code'], ['LOCALITY_CLASS_AUT.code'], name='LOCALITY_FK2'),
         ForeignKeyConstraint(['state_pid'], ['STATE.state_pid'], name='LOCALITY_FK3'),
@@ -252,7 +253,7 @@ class LOCALITY_ALIAS(Base):
     postcode:Mapped[str] = mapped_column(String(4), nullable = True)
     alias_type_code:Mapped[str] = mapped_column(ForeignKey('LOCALITY_ALIAS_TYPE_AUT.code'), nullable = True)
     state_pid:Mapped[str] = mapped_column(String(15), nullable = True)
-    __table_args = (
+    __table_args__ = (
         ForeignKeyConstraint(['alias_type_code'], ['LOCALITY_ALIAS_TYPE_AUT.code'], name='LOCALITY_ALIAS_FK1'),
         ForeignKeyConstraint(['locality_pid'], ['LOCALITY.locality_pid'], name='LOCALITY_ALIAS_FK2'),
     )
@@ -279,7 +280,7 @@ class LOCALITY_NEIGHBOUR(Base):
     date_retired:Mapped[datetime.date] = mapped_column(Date, nullable = True)
     locality_pid:Mapped[str] = mapped_column(ForeignKey('LOCALITY.locality_pid'), nullable = True)
     neighbour_locality_pid:Mapped[str] = mapped_column(ForeignKey('LOCALITY.locality_pid'), nullable = True)
-    __table_args = (
+    __table_args__ = (
         ForeignKeyConstraint(['locality_pid'], ['LOCALITY.locality_pid'], name='LOCALITY_NEIGHBOUR_FK1'),
         ForeignKeyConstraint(['neighbour_locality_pid'], ['LOCALITY.locality_pid'], name='LOCALITY_NEIGHBOUR_FK2'),
     )
@@ -294,7 +295,7 @@ class LOCALITY_POINT(Base):
     planimetric_accuracy:Mapped[int] = mapped_column(Numeric(12), nullable = True)
     longitude:Mapped[float] = mapped_column(Numeric(11, 8), nullable = True)
     latitude:Mapped[float] = mapped_column(Numeric(10, 8), nullable = True)
-    __table_args = (
+    __table_args__ = (
         ForeignKeyConstraint(['locality_pid'], ['LOCALITY.locality_pid'], name='LOCALITY_POINT_FK1'),
     )
 
@@ -331,7 +332,7 @@ class PRIMARY_SECONDARY(Base):
     date_retired:Mapped[datetime.date] = mapped_column(Date, nullable = True)
     ps_join_type_code:Mapped[int] = mapped_column(ForeignKey('PS_JOIN_TYPE_AUT.code'), nullable = True)
     ps_join_comment:Mapped[str] = mapped_column(String(500), nullable = True)
-    __table_args = (
+    __table_args__ = (
         ForeignKeyConstraint(['primary_pid'], ['ADDRESS_DETAIL.address_detail_pid'], name='PRIMARY_SECONDARY_FK1'),
         ForeignKeyConstraint(['ps_join_type_code'], ['PS_JOIN_TYPE_AUT.code'], name='PRIMARY_SECONDARY_FK2'),
         ForeignKeyConstraint(['secondary_pid'], ['ADDRESS_DETAIL.address_detail_pid'], name='PRIMARY_SECONDARY_FK3'),
@@ -374,7 +375,7 @@ class STREET_LOCALITY(Base):
     gnaf_street_pid:Mapped[str] = mapped_column(String(15), nullable = True)
     gnaf_street_confidence:Mapped[int] = mapped_column(Numeric(1), nullable = True)
     gnaf_reliability_code:Mapped[int] = mapped_column(ForeignKey('GEOCODE_RELIABILITY_AUT.code'), nullable = True)
-    __table_args = (
+    __table_args__ = (
         ForeignKeyConstraint(['gnaf_reliability_code'], ['GEOCODE_RELIABILITY_AUT.code'], name='STREET_LOCALITY_FK1'),
         ForeignKeyConstraint(['locality_pid'], ['LOCALITY.locality_pid'], name='STREET_LOCALITY_FK2'),
         ForeignKeyConstraint(['street_class_code'], ['STREET_CLASS_AUT.code'], name='STREET_LOCALITY_FK3'),
@@ -393,7 +394,7 @@ class STREET_LOCALITY_ALIAS(Base):
     street_type_code:Mapped[str] = mapped_column(ForeignKey('STREET_TYPE_AUT.code'), nullable = True)
     street_suffix_code:Mapped[str] = mapped_column(ForeignKey('STREET_SUFFIX_AUT.code'), nullable = True)
     alias_type_code:Mapped[str] = mapped_column(ForeignKey('STREET_LOCALITY_ALIAS_TYPE_AUT.code'), nullable = True)
-    __table_args = (
+    __table_args__ = (
         ForeignKeyConstraint(['alias_type_code'], ['STREET_LOCALITY_ALIAS_TYPE_AUT.code'], name='STREET_LOCALITY_ALIAS_FK1'),
         ForeignKeyConstraint(['street_locality_pid'], ['STREET_LOCALITY.street_locality_pid'], name='STREET_LOCALITY_ALIAS_FK2'),
         ForeignKeyConstraint(['street_suffix_code'], ['STREET_SUFFIX_AUT.code'], name='STREET_LOCALITY_ALIAS_FK3'),
@@ -418,7 +419,7 @@ class STREET_LOCALITY_POINT(Base):
     planimetric_accuracy:Mapped[int] = mapped_column(Numeric(12), nullable = True)
     longitude:Mapped[float] = mapped_column(Numeric(11, 8), nullable = True)
     latitude:Mapped[float] = mapped_column(Numeric(10, 8), nullable = True)
-    __table_args = (
+    __table_args__ = (
         ForeignKeyConstraint(['street_locality_pid'], ['STREET_LOCALITY.street_locality_pid'], name='STREET_LOCALITY_POINT_FK1'),
     )
 
