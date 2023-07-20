@@ -808,7 +808,6 @@ def addStreetNumber(this, buildingName, streetPid, localityPid, lotNumber, numbe
     Add street number from ADDRESS_DETAIL table, xxx_ADDRESS_DETAIL_psv.psv or address_detail.psv
     '''
     # this.logger.debug('Adding street number %s', str(numberFirst))
-
     if lotNumber is not None:
         if (buildingName is not None) and (buildingName != ''):
             if buildingName not in buildings:
@@ -1192,7 +1191,7 @@ def initData(this):
 
         # And some default geocode stuff
         defaultGeocode = {}
-        dfMB = pd.read_sql_query(text('SELECT address_detail_pid, longitude, latitude FROM ADDRESS_DEFAULT_GEOCODE date_retired IS NULL'), engine.connect())
+        dfMB = pd.read_sql_query(text('SELECT address_detail_pid, longitude, latitude FROM ADDRESS_DEFAULT_GEOCODE WHERE date_retired IS NULL'), engine.connect())
         results = dfMB.values.tolist()
         for (address_detail_pid, longitude, latitude) in results:
             defaultGeocode[address_detail_pid] = (str(latitude), str(longitude))
@@ -1205,6 +1204,18 @@ def initData(this):
             mbCode = None
             if (addressPid in addressMB) and (addressMB[addressPid] in MB):
                 mbCode = MB[addressMB[addressPid]]
+                try:
+                    lotNumber = int(lotNumber)
+                except (ValueError, TypeError):
+                    lotNumber = None
+                try:
+                    numberFirst = int(numberFirst)
+                except (ValueError, TypeError):
+                    numberFirst = None
+                try:
+                    numberLast = int(numberLast)
+                except (ValueError, TypeError):
+                    numberLast = None
             longitude = None
             latitude = None
             if addressPid in defaultGeocode:
@@ -1545,19 +1556,9 @@ def initData(this):
 
     this.logger.info('%d street types and %d street suffixes fetched', len(streetTypes), len(streetSuffixes))
 
-
     # Read in SA1 and LGA data
     this.logger.info('Fetching Mesh Block SA1 and LGA codes')
-    if DatabaseType is not None:    # Use the database tables
-        dfMB = pd.read_sql_query(text('SELECT mb_code_2016, sa1_maincode_2016 FROM MB_2016_DATA'), engine.connect())
-        results = dfMB.values.tolist()
-        for (mbCode, sa1) in results:
-            SA1map[mbCode] = sa1
-        dfSA1 = pd.read_sql_query(text('SELECT mb_code_2016, lga_code_2020 FROM LGA_2020_DATA'), engine.connect())
-        results = dfSA1.values.tolist()
-        for (mbCode, lgaCode) in results:
-            LGAmap[mbCode] = lgaCode
-    elif GNAFdir is not None:       # Use the standard ABS Mesh Block and LGA csv files
+    if GNAFdir is not None:       # Use the standard ABS Mesh Block and LGA csv files
         # MB_CODE_2016,MB_CATEGORY_NAME_2016,SA1_MAINCODE_2016,SA1_7DIGITCODE_2016,SA2_MAINCODE_2016,SA2_5DIGITCODE_2016,SA2_NAME_2016,SA3_CODE_2016,SA3_NAME_2016,SA4_CODE_2016,SA4_NAME_2016,GCCSA_CODE_2016,GCCSA_NAME_2016,STATE_CODE_2016,STATE_NAME_2016,AREA_ALBERS_SQKM
         for SandT in SandTs:
             with open(os.path.join(ABSdir, 'MB', 'MB_2016_' + SandT + '.csv'), 'rt', newline='', encoding='utf-8') as mbFile:
@@ -2404,6 +2405,7 @@ Create the set of validStreets using streetName, streetType and streetSuffix
     this.logger.debug('createValidStreets - on entry, validStreets(%s)', repr(this.validStreets))
     soundCode = jellyfish.soundex(this.streetName)
     if soundCode not in streets:
+        this.logger.debug('createValidStreets - no street named %s, soundCode %s', this.streetName, soundCode)
         return
     streetType = this.streetType
     streetSuffix = this.streetSuffix
@@ -2417,17 +2419,23 @@ Create the set of validStreets using streetName, streetType and streetSuffix
             streetKey = '~'.join([this.streetName, '', this.streetSuffix])
             shortKey = ' '.join([this.streetName, this.streetSuffix]).strip()
         if shortKey not in shortStreets:
+            if this.streetSuffix is None:
+                this.logger.debug('createValidStreets - no short street named %s, soundCode %s, streetKey %s', this.streetName, soundCode, streetKey)
+            else:
+                this.logger.debug('createValidStreets - no short street named %s %s, soundCode %s, streetKey %s', this.streetName, this.streetSuffix, soundCode, streetKey)
             return
         srcs = shortStreets[shortKey]
     elif this.streetSuffix is None:
         streetSuffix = ''
         streetKey = '~'.join([this.streetName, this.streetType, ''])
         if streetKey not in streets[soundCode]:
+            this.logger.debug('createValidStreets - no street named %s %s, soundCode %s, streetKey %s', this.streetName, this.streetType, soundCode, streetKey)
             return
         srcs = streets[soundCode][streetKey]
     else:
         streetKey = '~'.join([this.streetName, this.streetType, this.streetSuffix])
         if streetKey not in streets[soundCode]:
+            this.logger.debug('createValidStreets - no street named %s %s %s, soundCode %s, streetKey %s', this.streetName, this.streetType, this.streetSuffix, soundCode, streetKey)
             return
         srcs = streets[soundCode][streetKey]
     this.logger.debug('createValidStreets - streetKey(%s)', streetKey)
