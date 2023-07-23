@@ -3,11 +3,13 @@
 # pylint: disable=unspecified-encoding, broad-exception-caught, line-too-long, invalid-name, pointless-string-statement
 
 '''
-A python script to load G-NAF database tables with the G-NAF data using SQLAlchemy definitions
+A python script to add primary keys, indexes and foreign key constraints to a G-NAF database
+NOTE: verifyAddress.py does not need this, as it read in all the data from selected tables.
+However, a fully functional G-NAF database is a nice thing to have.
+
 SYNOPSIS
-$ python loadSQLAlchemyDB.py 
+$ python indexSQLAlchemyDB.py 
                          [-D databaseType|--databaseType=databaseType]
-                         [-G GNAFdir|--GNAFdir=GNAFdir]
                          [-u username|--username=username] [-p password|--password=password]
                          [-s Server|--Server=Server] [-d databaseName|--databaseName=databaseName]
                          [-v loggingLevel|--verbose=logingLevel] [-L logDir|--logDir=logDir] [-l logfile|--logfile=logfile]
@@ -15,9 +17,6 @@ $ python loadSQLAlchemyDB.py
 REQUIRED
 -D databaseType|--databaseType=databaseType
 The type of database [eg:MSSQL/MySQL]
-
--G GNAFdir|--GNAFdir=GNAFdir
-The directory containing the 'Authority Code' and 'Standard' directories, where all the G-NAF files will be found
 
 
 OPTIONS
@@ -50,13 +49,11 @@ import argparse
 import logging
 import collections
 import json
-import decimal
-import datetime
-import pandas as pd
-from sqlalchemy import create_engine, MetaData
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import create_engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy_utils import database_exists
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 import defineSQLAlchemyDB as dbConfig
 
 # This next section is plagurised from /usr/include/sysexits.h
@@ -85,7 +82,7 @@ EX_CONFIG = 78        # configuration error
 # The main code
 if __name__ == '__main__':
     '''
-    Load the tables in a database with the G-NAF data
+    Index the tables in a G-NAF database
     '''
 
     # Get the script name (without the '.py' extension)
@@ -95,8 +92,6 @@ if __name__ == '__main__':
     # Define the command line options
     parser = argparse.ArgumentParser(prog=progName)
     parser.add_argument('-D', '--databaseType', dest='databaseType', required=True, help='The database Type [e.g.: MSSQL/MySQL]')
-    parser.add_argument('-G', '--GNAFdir', dest='GNAFdir', default='../..', required=True,
-                        help='The directory containing the "Authority Code" and "Standard" G-NAF folders')
     parser.add_argument('-u', '--username', dest='username', help='The user required to access the database')
     parser.add_argument('-p', '--password', dest='password', help='The user password required to access the database')
     parser.add_argument('-s', '--server', dest='server', help='The address of the database server')
@@ -110,7 +105,6 @@ if __name__ == '__main__':
     # Parse the command line options
     args = parser.parse_args()
     databaseType = args.databaseType
-    GNAFdir = args.GNAFdir
     username = args.username
     password = args.password
     server = args.server
@@ -202,7 +196,7 @@ if __name__ == '__main__':
     if databaseType == 'MSSQL':
         engine = create_engine(connectionString, use_setinputsizes=False, echo=True)
     else:
-        engine = create_engine(connectionString, echo=True, pool_pre_ping=True, pool_recycle=3600, pool_size=5)
+        engine = create_engine(connectionString, echo=True, pool_pre_ping=True)
 
     # Check if the database exists
     if not database_exists(engine.url):
@@ -222,119 +216,26 @@ if __name__ == '__main__':
         logging.shutdown()
         sys.exit(EX_UNAVAILABLE)
     conn.close()
-    Session = sessionmaker(bind=engine)
     # logging.getLogger('sqlalchemy.engine').setLevel(logging.DEBUG)
 
-    metadata = MetaData()
-    metadata.reflect(bind=engine)
+    # Set up alembic
+    mc = MigrationContext.configure(engine.connect())
+    ops = Operations(mc)
 
-    # Then the Standard files - which must be loaded in the correct order for Primary Key -> Foriegn Key relationships
-    tablePhases = {'ADDRESS_SITE':0, 'MB_2011':0, 'MB_2016':0, 'STATE':0,
-                   'ADDRESS_SITE_GEOCODE':1,  'LOCALITY':1,
-                   'LOCALITY_ALIAS':2, 'LOCALITY_NEIGHBOUR':2, 'LOCALITY_POINT':2, 'STREET_LOCALITY':2,
-                   'ADDRESS_DETAIL':3, 'STREET_LOCALITY_ALIAS':3, 'STREET_LOCALITY_POINT':3,
-                   'ADDRESS_ALIAS':4, 'ADDRESS_DEFAULT_GEOCODE':4, 'ADDRESS_FEATURE':4, 'ADDRESS_MESH_BLOCK_2011':4, 'ADDRESS_MESH_BLOCK_2016':4,
-                   'PRIMARY_SECONDARY':4
-                  }
-
-    # Delete all the rows in the Standard files
-    for phase in [4, 3, 2, 1, 0]:
-        for tablename, tablePhase in tablePhases.items():
-            if tablePhase != phase:
-                continue
-            logging.info('Deleting rows from %s', tablename)
-            try:
-                table = metadata.tables[tablename]
-            except Exception as e:
-                table = metadata.tables[tablename.lower()]
-            with Session() as session:      # Delete all the rows
-                deleteRows = session.query(table).delete()
-                session.commit()
-
-
-    # Process the Authority Code files first
-    files = []
-    for dirEntry in os.scandir(os.path.join(GNAFdir, 'Authority Code')):
-        filename = dirEntry.name
-        if filename.endswith('_psv.psv'):
-            files.append(filename)
-
-    for filename in files:
-        tablename = filename[15:-8]
-        dtypes = {}
-        parse_dates = []
-        SQLAlchemyDtypes = {}
-        logging.info('Deleting rows from %s', tablename)
-        table = dbConfig.Base.metadata.tables[tablename]
-        with Session() as session:      # Delete all the rows
-            deleteRows = session.query(table).delete()
-            session.commit()
-        for column in table.columns:
-            if column.type.python_type is decimal.Decimal:
-                dtypes[column.name.upper()] = float
-            elif column.type.python_type is datetime.date:
-                parse_dates.append(column.name.upper())
-            else:
-                dtypes[column.name.upper()] = column.type.python_type
-        with open(os.path.join(GNAFdir, 'Authority Code', filename), 'rt', encoding='utf-8') as csvfile:
-            df = pd.read_csv(csvfile, sep='|', dtype=dtypes, parse_dates=parse_dates)
-        for column in table.columns:        # Drop any rows where the primary key is null
+    # Create the primary key and any indexes on each table
+    for thisTable in dbConfig.Base.metadata.tables:
+        for column in dbConfig.Base.metadata.tables[thisTable].columns:
             if column.primary_key:
-                df = df.dropna(subset=[column.name.upper()])
-        logging.info("Loading table %s, from file %s", tablename, filename)
-        try:
-            df.to_sql(tablename, con=engine, index=False, dtype=SQLAlchemyDtypes, if_exists='append', chunksize=100000)
-        except Exception as e:
-            logging.critical('Failed to load file %s to table %s - error %s:%s', filename, tablename, e, e.args)
-            logging.critical('Data: %s', df.to_string())
-            logging.shutdown()
-            sys.exit(EX_DATAERR)
+                ops.create_primary_key('PRIMARY', thisTable, [column.name])
 
-    # Load the standard files
-    filePhases = {0:[], 1:[], 2:[], 3:[], 4:[]}
-    for dirEntry in os.scandir(os.path.join(GNAFdir, 'Standard')):
-        filename = dirEntry.name
-        if filename.endswith('_psv.psv'):
-            pre = filename.find('_')
-            tablename = filename[pre + 1:-8]
-            if tablename in tablePhases:
-                phase = tablePhases[tablename]
-                filePhases[phase].append((tablename, filename))
-            else:
-                logging.critical('No known table for file %s', filename)
-                logging.shutdown()
-                sys.exit(EX_OSFILE)
-        else:
-            logging.critical('Non-psv file %s', filename)
-            logging.shutdown()
-            sys.exit(EX_OSFILE)
-
-    # Load the data
-    for phase in range(5):
-        for tablename, filename in filePhases[phase]:
-            dtypes = {}
-            parse_dates = []
-            SQLAchemyDtypes = {}
-            table = dbConfig.Base.metadata.tables[tablename]
-            for column in table.columns:
-                SQLAlchemyDtypes = column.type
-                if column.type.python_type is decimal.Decimal:
-                    dtypes[column.name.upper()] = float
-                elif column.type.python_type is datetime.date:
-                    parse_dates.append(column.name.upper())
-                else:
-                    dtypes[column.name.upper()] = column.type.python_type
-            with open(os.path.join(GNAFdir, 'Standard', filename), 'rt', encoding='utf-8') as csvfile:
-                df = pd.read_csv(csvfile, sep='|', dtype=dtypes, parse_dates=parse_dates)
-            for column in table.columns:        # Drop any rows where the primary key is null
-                if column.primary_key:
-                    df = df.dropna(subset=[column.name.upper()])
-            try:
-                df.to_sql(tablename, con=engine, index=False, dtype=SQLAlchemyDtypes, if_exists='append', chunksize=100000)
-            except Exception as e:
-                logging.critical('Failed to load file %s to table %s - error %s:%s', filename, tablename, e, e.args)
-                logging.critical('Data: %s', df.to_string())
-                logging.shutdown()
-                sys.exit(EX_DATAERR)
-
-    print('All tables have been loaded')
+    # Create the foreign key constraints on each table
+    for thisTable in dbConfig.Base.metadata.tables:
+        fkNo = 1
+        for column in dbConfig.Base.metadata.tables[thisTable].columns:
+            if column.foreign_keys:
+                ops.create_index(column.name, thisTable, [column.name])
+                fkName = f'{thisTable}_FK{fkNo}'
+                fkNo += 1
+                key = list(column.foreign_keys)[0]
+                bits = key.target_fullname.split('.')
+                ops.create_foreign_key(fkName, thisTable, bits[0], [column.name], [bits[1]])
