@@ -1815,8 +1815,8 @@ def removeFlats(this, addressLine, trimEnd):
 Remove Flats trim from addressLine
     '''
 
-    if trimEnd == 0:
-        return trimEnd
+    if trimEnd == 0:        # Address started with a number
+        return
 
     for flat in flats:
         matched = flat.search(addressLine[:trimEnd])
@@ -1832,8 +1832,8 @@ def removeLevels(this, addressLine, trimEnd):
 Remove Levels trim from addressLine
     '''
 
-    if trimEnd == 0:
-        return addressLine, trimEnd
+    if trimEnd == 0:        # Address started with a number
+        return
 
     for level in levels:
         matched = level.search(addressLine[:trimEnd])
@@ -1852,8 +1852,8 @@ which include this deliveryNumber.
 If nothing found, then look for postal services than cannot include a deliveryNumber
     '''
 
-    if trimEnd == 0:
-        return addressLine, trimEnd
+    if trimEnd == 0:        # Address started with a number
+        return False
 
     if (houseEnd is not None) and (not this.isLot) and (not this.isRange):
         # We have a deliveryNumber - check if it is a postal service delivery number
@@ -1896,8 +1896,8 @@ def removeExtraTrims(this, addressLine, trimEnd):
 Remove Extra trimsss from addressLine
     '''
 
-    if trimEnd == 0:
-        return addressLine, trimEnd
+    if trimEnd == 0:        # Address started with a number
+        return
 
     for trim in extraTrims:
         matched = trim.search(addressLine[:trimEnd])
@@ -3520,7 +3520,7 @@ The accuracy is
         suburb = cleanText(this.Address['suburb'], False)
         leftOvers = scanForSuburb(this, suburb, 'forwards', True)            # Find all the suburbs in the 'suburb'
         if len(this.validSuburbs) == 0:
-            this.result['messages'].append('Bad suburb({suburb})')
+            this.result['messages'].append(f'Bad suburb({suburb})')
         else:
             this.result['suburb'] = sorted(list(this.validSuburbs))[0]
         if leftOvers != '':
@@ -3587,22 +3587,30 @@ The accuracy is
 
     # Now remove the trim
     this.trim = None
-    if not removePostalService(this, addressLine, trimEnd, houseEnd):
+    if not removePostalService(this, addressLine, trimEnd, houseEnd):       # Postal addresses can't have flat, levels, extra trim
         this.logger.debug('Removing flats, levels and trims')
+        # Find the longest trim
         removeFlats(this, addressLine, trimEnd)
         removeLevels(this, addressLine, trimEnd)
         removeExtraTrims(this, addressLine, trimEnd)
 
     # Remove any left over garbage trim - if we can do so safely
-    if lastDigits is not None:
+    if lastDigits is not None:      # We have a boundary between trim and address
         if not this.isPostalService:
             this.trim = addressLine[:trimEnd].strip()
             if this.trim == '':
                 this.trim = None
             addressLine = addressLine[trimEnd + houseEnd:].strip()
         else:
+            this.trim = this.postalServiceText1
             trimEnd = len(this.postalServiceText1)
             addressLine = addressLine[trimEnd:].strip()
+    else:
+        if this.trim is not None:       # We have 'trim', but it might wipe out the street and/or suburb
+            trimEnd = len(this.trim)
+        else:
+            trimEnd = 0
+    this.logger.debug('Trim (%s) found, trimEnd(%d)', this.trim, trimEnd)
 
     '''
     Search for street type in addressLine
@@ -3629,7 +3637,7 @@ The accuracy is
                         streetTypeEnd = match.end()
 
         if streetTypeAt is None:    # No streetType in address
-            this.logger.debug('No street type found - scanning for street names')
+            this.logger.debug('No street type found - scanning for streets with no street type')
             '''
             Scan for street with no street type
             '''
@@ -3643,22 +3651,29 @@ The accuracy is
                         streetAt = found.start()
                         streetEnd = foundEnd
             if streetAt is not None:
-                this.streetName = addressLine[:streetEnd].strip()
+                this.streetName = addressLine[:streetEnd].strip()       # Include trim
                 if this.streetName == '':
                     this.streetName = None
+                elif (lastDigits is None) and (this.trim is not None) and (trimEnd <= streetAt):
+                    this.streetName = addressLine[trimEnd:streetEnd].strip()        # Excludes trim
+                elif (lastDigits is not None) and (this.trim == this.streetName):       # A street who's name is a number!!!
+                    this.trim = None
                 extraText = addressLine[streetEnd:].strip()
             else:
                 this.streetName = None
                 extraText = addressLine
         else:
-            this.streetName = addressLine[:streetTypeAt].strip()
+            this.streetName = addressLine[:streetTypeAt].strip()        # Includes trim
             if this.streetName == '':
                 this.streetName = None
+            elif (lastDigits is None) and (trimEnd > streetTypeAt):
+                this.trim = None
+                trimEnd = 0
             extraText = addressLine[streetTypeEnd:].strip()
     if streetTypeAt is not None:
-        this.logger.info('Street name (%s %s), extraText (%s)', this.streetName, this.streetType, extraText)
+        this.logger.info('Trim (%s), Street name (%s %s), extraText (%s)', this.trim, this.streetName, this.streetType, extraText)
     elif streetAt is not None:
-        this.logger.info('Street name (%s), extraText (%s)', this.streetName, extraText)
+        this.logger.info('Trim (%s), Street name (%s), extraText (%s)', this.trim, this.streetName, extraText)
     else:               # Scan for a word that sounds like a street type
         this.logger.debug('No street type/street name found - scanning for sounds like street types')
         words = addressLine.split(' ')
@@ -3678,11 +3693,14 @@ The accuracy is
                         streetTypeAt = at
                         streetTypeEnd = at + len(words[ii])
         if streetTypeAt is not None:
-            this.streetName = addressLine[:streetTypeAt].strip()
+            this.streetName = addressLine[:streetTypeAt].strip()        # Includes trim
             if this.streetName == '':
                 this.streetName = None
+            elif (lastDigits is None) and (trimEnd > streetTypeAt):
+                this.trim = None
+                trimEnd = 0
             extraText = addressLine[streetTypeEnd:].strip()
-            this.logger.info('Street name (%s %s), extraText (%s)', this.streetName, this.streetType, extraText)
+            this.logger.info('Trim (%s), Street name (%s %s), extraText (%s)', this.trim, this.streetName, this.streetType, extraText)
         else:
             this.logger.info('No street type/street name found')
 
@@ -3720,7 +3738,14 @@ The accuracy is
 
     # Set up street and abbrevStreet
     if this.streetName is not None:
-        this.street = this.streetName
+        if (lastDigits is None) and (this.trim is not None) and (this.streetName.startswith(this.trim)):
+            if this.trim == this.streetName:
+                this.street = this.streetName
+                this.trim = None
+            else:
+                this.street = this.streetName[trimEnd:].strip()
+        else:
+            this.street = this.streetName       # May included trim (but trim will be None)
         this.abbrevStreet = this.streetName
         if this.streetType is not None:
             this.street += ' ' + this.streetType
@@ -3734,6 +3759,7 @@ The accuracy is
     '''
     this.fuzzLevel = 0      # No fuzzy logic for Rules 1 and 2 tests
     if not Rules1and2(this):
+        # We have very little address data
         this.logger.debug('Failed Rules1and2')
         this.result['status'] = 'Address not found'
         this.result['accuracy'] = '0'
