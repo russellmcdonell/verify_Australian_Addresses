@@ -521,15 +521,20 @@ extraPostcodeSA1LGA.psv and extraLocality.psv from getConfig.json
         for name in config['LOCALITY_POSTCODE']:
             if name == '/* comment */':
                 continue
-            if name not in locality:        # Can't make up data, just add alternative postcodes
+            if name not in locality:        # Can't make up data, just add alternative postcodes and/or names
                 continue
-            for postcode in config['LOCALITY_POSTCODE'][name]:
-                if postcode in locality[name]:
-                    continue                # We have this data
-                otherPostcode = list(locality[name])[0]     # Take the other data from here
-                otherData = locality[name][otherPostcode][0]
-                localityPid = name
-                localityName = otherData[0]
+            localityPid = name
+            for entry in config['LOCALITY_POSTCODE'][localityPid]:
+                if 'postcode' in entry:
+                    postcode = entry['postcode']
+                else:
+                    postcode = list(locality[localityPid])[0]     # Take the other data from here
+                otherPostcode = list(locality[localityPid])[0]
+                otherData = locality[localityPid][otherPostcode][0]
+                if 'locality' in entry:
+                    localityName = entry['locality']
+                else:
+                    localityName = otherData[0]
                 statePid = otherData[1]
                 extraLocalities.append([localityPid, localityName, postcode, statePid, 'A'])
 
