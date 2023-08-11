@@ -2189,7 +2189,7 @@ then look for a building, with a name that matches one of those suburbs, and a h
 If not, then we only have state and postcode, so look for a building that is within the state and/or postcode.
     '''
 
-    this.logger.debug('scoreBuilding - houseNo (%s), buildings(%s), thisState(%s), thisPostcode(%s)', this.houseNo, this.foundBuildings, thisState, thisPostcode)
+    this.logger.debug('scoreBuilding - houseNo (%s), thisState(%s), thisPostcode(%s), buildings(%s)', this.houseNo, thisState, thisPostcode, this.foundBuildings)
 
     if len(this.foundBuildings) == 0:
         this.logger.debug('scoreBuilding - no buildings')
@@ -2253,17 +2253,28 @@ If not, then we only have state and postcode, so look for a building that is wit
     buildingName = None
     bulidingLocalityPid = None
     for name in thisFoundBuilding:
-        for buildingInfo in thisFoundBuilding[name]:
+        if len(thisFoundBuilding[name]) == 1:          # Unique location
             if buildingName is None:
+                buildingInfo = thisFoundBuilding[name][0]
                 buildingName = name
                 buildingLocalityPid = buildingInfo[3]
-            elif (thisState is None) and (name == buildingName) and (buildingInfo[3] == buildingLocalityPid):    # Multiple buildings - same name, same locality - first will do
-                continue
             else:                                           # Different name or different locality
                 this.logger.debug('scoreBuilding - too many matching buildings (%s)', thisFoundBuilding)
                 if not this.result['isPostalService']:
                     this.result['buildingName'] = ''
                 return False
+        elif (thisState is None):                   # Duplicates - could be a community
+            for buildingInfo in thisFoundBuilding[name]:
+                if buildingName is None:
+                    buildingName = name
+                    buildingLocalityPid = buildingInfo[3]
+                elif (name == buildingName) and (buildingInfo[3] == buildingLocalityPid):    # Multiple buildings - same name, same locality - first will do
+                    continue
+                else:                                           # Different name or different locality
+                    this.logger.debug('scoreBuilding - too many matching buildings (%s)', thisFoundBuilding)
+                    if not this.result['isPostalService']:
+                        this.result['buildingName'] = ''
+                    return False
     if buildingName is None:
         this.logger.debug('scoreBuilding - too many matching buildings (%s)', thisFoundBuilding)
         if not this.result['isPostalService']:
@@ -2280,8 +2291,12 @@ If not, then we only have state and postcode, so look for a building that is wit
     for thisStatePid, thisLocalityName, thisAlias in localities[localityPid]:
         if thisStatePid != this.validState:
             continue
-        matchingState = thisStatePid
-        matchingSuburb = thisLocalityName
+        if thisAlias == 'P':
+            matchingState = thisStatePid
+            matchingSuburb = thisLocalityName
+        elif matchingState is None:
+            matchingState = thisStatePid
+            matchingSuburb = thisLocalityName
     if matchingState is None:           # No matching building in this state
         this.logger.debug('scoreBuilding - no matching buildings in this state (%s)', this.validState)
         if not this.result['isPostalService']:
@@ -4154,12 +4169,6 @@ The accuracy is
         if this.isPostalService and (this.street is None) and (this.bestSuburb is not None):
             break
 
-        ### NT SPECIFIC HACK FOR SMALL COMMUNITIES - COMMUNITY === SUBURB === STREET (HOUSES HAVE COMMUNITY NUMBERS)
-        if thisFuzz == 8:       # Don't try streets with other street types if we have a valid street
-            if streetFound:
-                break
-        ### END NT SPECIFIC HACK FOR SMALL COMMUNITIES - COMMUNITY === SUBURB === STREET (HOUSES HAVE COMMUNITY NUMBERS)
-
     # No more fuzz levels - return a street answer if we ever had any valid streets
     if this.isPostalService and (this.street is None) and (this.bestSuburb is not None):
         # We have a best suburb - a suburb that's in the valid state and in the valid postcode
@@ -4175,7 +4184,7 @@ The accuracy is
         setupAddress1Address2(this, None)
         return
     if streetFound and bestStreetPid is not None:
-        if scoreBuilding(this, None, None):            # See if we can do better with a building name that matches one of these suburbs, with a house that has this house number
+        if (this.houseNo is not None) and (scoreBuilding(this, None, None)):            # See if we can do better with a building name that matches one of these suburbs, with a house that has this house number
             this.logger.debug('building found')
             return
         setupAddress1Address2(this, None)
@@ -4183,7 +4192,7 @@ The accuracy is
     if not streetFound:
         # We have no streets within suburbs but, if we have suburbs, we may be able to return suburb level geocode data
         if len(this.validSuburbs) > 0:            # We have suburbs
-            if scoreBuilding(this, None, None):            # See if we can do better with a building name that matches one of these suburbs, with a house that has this house number
+            if (this.houseNo is not None) and (scoreBuilding(this, None, None)):            # See if we can do better with a building name that matches one of these suburbs, with a house that has this house number
                 this.logger.debug('building found')
                 return
             thisSuburb = None
@@ -4327,7 +4336,7 @@ The accuracy is
             return
     else:
         # We have streets within suburbs - return the first one - it's a guess
-        if scoreBuilding(this, None, None):            # See if we can do better with a building name that matches one of these suburbs, with a house that has this house number
+        if (this.houseNo is not None) and (scoreBuilding(this, None, None)):            # See if we can do better with a building name that matches one of these suburbs, with a house that has this house number
             this.logger.debug('building found')
             return
         streetPid = list(this.subsetValidStreets)[0]
