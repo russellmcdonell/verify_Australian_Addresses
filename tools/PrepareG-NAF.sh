@@ -214,3 +214,12 @@ else
 	done
 fi
 
+
+# Create the community_SA1LGA.psv file
+if test -f "community_SA1LGA.psv"
+then
+	echo "community_SA1LGA.psv already created"
+else
+	echo "creating community_SA1LGA.psv"
+	python3 getCommunity.py -G "${GNAFdir}" -A "${ABSdir}"
+fi

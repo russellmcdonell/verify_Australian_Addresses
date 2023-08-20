@@ -33,7 +33,7 @@ $ python verifyAddress.py [-I inputDir|--inputDir=inputDir] [-O outputDir|--outp
                          [-u username|--username=username] [-p password|--password=password]
                          [-d databaseName|--databaseName=databaseName]
                          [-x|--addExtras] [-W|configWeights]
-                         [-a|--abbreviate] [-b|--returnBoth] [-|filename]...
+                         [-a|--abbreviate] [-b|--returnBoth] [-i|--indigenious] [-|filename]...
                          [-v loggingLevel|--verbose=logingLevel] [-L logDir|--logDir=logDir] [-l logfile|--logfile=logfile]
 
 REQUIRED
@@ -107,6 +107,9 @@ Return abbreviated street types
 
 -b|--returnBoth
 Return both full and abbreviated street types
+
+-i|--indigenious
+Search for Indigenious community addresses
 
 -v loggingLevel|--verbose=loggingLevel
 Set the level of logging that you want (defaut INFO).
@@ -196,6 +199,8 @@ conn = None                     # The database connection
 Session = None                  # The database session maker
 databaseName = None             # The database name
 addExtras = None                # Strip of extra trims
+indigenious = None              # Look for indigenious communities
+communityCodes = []             # Codes representing the word 'COMMUNITY'
 logDir = '.'                    # The directory where the log files will be written
 logging_levels = {0:logging.CRITICAL, 1:logging.ERROR, 2:logging.WARNING, 3:logging.INFO, 4:logging.DEBUG}
 loggingLevel = logging.NOTSET        # The default logging level
@@ -245,7 +250,7 @@ SandTs = ['ACT', 'NSW', 'NT', 'OT', 'QLD', 'SA', 'TAS', 'VIC', 'WA']
 
 # Set up the default configuration for suburb/street weights and fuzz levels
 # These can be overridden from the configuration file
-suburbSourceWeight = {'G':10, 'GA':9, 'GN':8, 'GS':5, 'GL':4, 'GAS':2, 'GAL':1, '':0}
+suburbSourceWeight = {'G':10, 'GA':9, 'C':8, 'GN':8, 'GS':5, 'GL':4, 'GAS':2, 'GAL':1, '':0}
 streetSourceWeight = {'G':10, 'GA':9, 'GS':5, 'GL':4, 'GAS':2, 'GAL':1, '':0}
                                 # fuzzLevels
 fuzzLevels = [ 1, 2,  3, 4, 5, 6, 7, 8, 9, 10 ]
@@ -663,6 +668,10 @@ def addSuburb(this, localityPid, statePid, suburb, alias, sa1, lga, latitude, lo
         if 'G' not in suburbs[soundCode][suburb][statePid]:
             suburbs[soundCode][suburb][statePid]['G'] = {}
         suburbs[soundCode][suburb][statePid]['G'][localityPid] = [sa1, lga, latitude, longitude]
+    elif alias == 'C':
+        if 'C' not in suburbs[soundCode][suburb][statePid]:
+            suburbs[soundCode][suburb][statePid]['C'] = {}
+        suburbs[soundCode][suburb][statePid]['C'][localityPid] = [sa1, lga, latitude, longitude]
     else:
         if 'GA' not in suburbs[soundCode][suburb][statePid]:
             suburbs[soundCode][suburb][statePid]['GA'] = {}
@@ -702,7 +711,7 @@ def addLocality(this, localityPid, suburb, postcode, statePid, alias):
         if localityPid not in localityPostcodes:
             localityPostcodes[localityPid] = set()
         localityPostcodes[localityPid].add(postcode)
-    if alias != 'P':            # Don't clone postcodes for locality aliases
+    if alias not in ['P', 'C']:            # Don't clone postcodes for locality aliases
         return
     soundCode = jellyfish.soundex(suburb)
     if (soundCode in suburbs) and (suburb in suburbs[soundCode]):
@@ -1271,6 +1280,31 @@ def initData(this):
                 longitude = rrow['longitude']
                 latitude = rrow['latitude']
                 addSuburb(this, localityPid, statePid, suburb, alias, sa1, lga, latitude, longitude)
+
+    # Read in indigenious communities if required
+    if indigenious:
+        # community_pid|state_pid|community_name|Postcode|SA1_MAINCODE_2016|LGA_CODE_2020|longitude|latitude
+        with open(os.path.join(DataDir, 'community_SA1LGA.psv'), 'rt', newline='', encoding='utf-8') as SA1File:
+            SA1Reader = csv.DictReader(SA1File, dialect=csv.excel, delimiter='|')
+            for rrow in SA1Reader:
+                localityPid = rrow['community_pid']
+                suburb = cleanText(rrow['community_name'], True)
+                postcode = rrow['Postcode']
+                statePid = rrow['state_pid']
+                alias = 'C'
+                addLocality(this, localityPid, suburb, postcode, statePid, alias)
+                sa1 = rrow['SA1_MAINCODE_2016']
+                lga = rrow['LGA_CODE_2020']
+                longitude = rrow['longitude']
+                latitude = rrow['latitude']
+                addSuburb(this, localityPid, statePid, suburb, alias, sa1, lga, latitude, longitude)
+        # description
+        with open(os.path.join(DataDir, 'community.txt'), 'rt', newline='', encoding='utf-8') as communityFile:
+            communityReader = csv.DictReader(communityFile, dialect=csv.excel)
+            for rrow in communityReader:
+                communityCodes.append(re.compile(r'\b' + cleanText(rrow['description'], True) + r'\b'))
+
+    # Report count of suburbs
     countOfSuburbs = 0
     for soundCode, suburbList in suburbs.items():
         countOfSuburbs += len(suburbList)
@@ -1924,7 +1958,7 @@ Return anything left over
                     for statePid in suburbs[soundCode][thisSuburb]:
                         if statePid not in this.validSuburbs[thisSuburb]:
                             this.validSuburbs[thisSuburb][statePid] = {}
-                        for src in ['G', 'GA', 'A']:            # Only add primary sources
+                        for src in ['G', 'GA', 'A', 'C']:            # Only add primary sources
                             if (src in suburbs[soundCode][thisSuburb][statePid]) and (src not in this.validSuburbs[thisSuburb][statePid]):
                                 this.logger.info('scanForSuburb - adding source(%s), for state(%s) for suburb(%s) to validSuburbs',
                                                   src, states[statePid][0], thisSuburb)
@@ -2154,7 +2188,7 @@ Score this suburb
             else:
                 this.logger.debug('scoreSuburb - checking validSuburb(%s)', thisSuburb)
                 isAPI = this.validSuburbs[thisSuburb]['SX'][1]
-                if len({'G', 'A', 'GA'}.intersection(this.validSuburbs[thisSuburb][statePid])) > 0:
+                if len({'G', 'A', 'GA', 'C'}.intersection(this.validSuburbs[thisSuburb][statePid])) > 0:
                     # Can't be an exact match or it would have been picked up above.
                     # Could be an alias, or a preferred name for an alias
                     this.logger.debug('scoreSuburb - G-NAF alias suburb')
@@ -2228,7 +2262,7 @@ If not, then we only have state and postcode, so look for a building that is wit
                 if this.validState not in this.validSuburbs[suburb]:
                     continue
                 for src in this.validSuburbs[suburb][this.validState]:
-                    if (src in ['G', 'GA', 'GS', 'GL', 'GN']) and (localityPid in this.validSuburbs[suburb][this.validState][src]):
+                    if (src in ['G', 'GA', 'GS', 'GL', 'GN', 'C']) and (localityPid in this.validSuburbs[suburb][this.validState][src]):
                         found = True
                         break
                 if found:
@@ -2252,10 +2286,10 @@ If not, then we only have state and postcode, so look for a building that is wit
     # We could have multiple building names, and multiple instances of buildings with that name
     buildingName = None
     bulidingLocalityPid = None
-    for name in thisFoundBuilding:
-        if len(thisFoundBuilding[name]) == 1:          # Unique location
+    for name, buildingsList in thisFoundBuilding.items():
+        if len(buildingsList) == 1:          # Unique location
             if buildingName is None:
-                buildingInfo = thisFoundBuilding[name][0]
+                buildingInfo = buildingsList[0]
                 buildingName = name
                 buildingLocalityPid = buildingInfo[3]
             else:                                           # Different name or different locality
@@ -2263,8 +2297,8 @@ If not, then we only have state and postcode, so look for a building that is wit
                 if not this.result['isPostalService']:
                     this.result['buildingName'] = ''
                 return False
-        elif (thisState is None):                   # Duplicates - could be a community
-            for buildingInfo in thisFoundBuilding[name]:
+        elif thisState is None:                   # Duplicates - could be a community
+            for buildingInfo in buildingsList:
                 if buildingName is None:
                     buildingName = name
                     buildingLocalityPid = buildingInfo[3]
@@ -2287,6 +2321,7 @@ If not, then we only have state and postcode, so look for a building that is wit
     streetPid = buildingInfo[2]
     localityPid = buildingInfo[3]
     matchingSuburb = None
+    matchingAlias = None
     matchingState = None
     for thisStatePid, thisLocalityName, thisAlias in localities[localityPid]:
         if thisStatePid != this.validState:
@@ -2294,9 +2329,11 @@ If not, then we only have state and postcode, so look for a building that is wit
         if thisAlias == 'P':
             matchingState = thisStatePid
             matchingSuburb = thisLocalityName
+            matchingAlias = thisAlias
         elif matchingState is None:
             matchingState = thisStatePid
             matchingSuburb = thisLocalityName
+            matchingAlias = thisAlias
     if matchingState is None:           # No matching building in this state
         this.logger.debug('scoreBuilding - no matching buildings in this state (%s)', this.validState)
         if not this.result['isPostalService']:
@@ -2323,6 +2360,10 @@ If not, then we only have state and postcode, so look for a building that is wit
         this.abbrevStreet += ' ' + streetSuffix
     this.result['street'] = this.street
     this.suburb = matchingSuburb
+    if matchingAlias == 'C':
+        this.result['isCommunity'] = True
+    else:
+        this.result['isCommunity'] = False
     this.result['suburb'] = this.suburb
     this.result['postcode'] = list(localityPostcodes[localityPid])[0]
     thisState = states[matchingState][0]
@@ -2354,7 +2395,7 @@ Set up accuracy 2 return values
     '''
 
     soundCode = jellyfish.soundex(thisSuburb)
-    for src in ['G', 'GA', 'A']:            # Select best suburb
+    for src in ['G', 'GA', 'C', 'A']:            # Select best suburb
         if statePid in suburbs[soundCode][thisSuburb]:
             if src in suburbs[soundCode][thisSuburb][statePid]:
                 key = list(suburbs[soundCode][thisSuburb][statePid][src])[0]
@@ -2362,7 +2403,10 @@ Set up accuracy 2 return values
                 this.result['LGA'] = suburbs[soundCode][thisSuburb][statePid][src][key][1]
                 this.result['latitude'] = suburbs[soundCode][thisSuburb][statePid][src][key][2]
                 this.result['longitude'] = suburbs[soundCode][thisSuburb][statePid][src][key][3]
-                if src ==  'A':            # Australia Post suburbs
+                this.result['isCommunity'] = False
+                if src in  ['A', 'C']:            # Australia Post suburbs and community names
+                    if src == 'C':
+                        this.result['isCommunity'] = True
                     this.result['G-NAF ID'] = str(thisSuburb) + '~' + str(key)
                     this.result['postcode'] = key
                     this.result['score'] &= ~12
@@ -2414,11 +2458,28 @@ Business Rules 1 and 2
     if region:
         if this.validState is None:
             if len(this.validSuburbs) > 0:
-                NTsuburb = list(this.validSuburbs)[0]
-                soundCode = jellyfish.soundex(NTsuburb)
-                if len(suburbs[soundCode][NTsuburb]) == 1:
-                    this.validState = list(suburbs[soundCode][NTsuburb])[0]
-                    this.logger.info('Trying state (%s)', this.validState)
+                thisSuburb = list(this.validSuburbs)[0]
+                soundCode = jellyfish.soundex(thisSuburb)
+                this.logger.debug('Rules1and2 - checking suburb %s:%s:%s', thisSuburb, soundCode, suburbs[soundCode])
+                if len(suburbs[soundCode][thisSuburb]) == 1:
+                    this.validState = list(suburbs[soundCode][thisSuburb])[0]
+                    this.logger.info('Rules1and2 - trying state (%s)', this.validState)
+                else:
+                    this.logger.debug('Rules1and2 - suburb %s is in multiple states', thisSuburb)
+                    if (this.validPostcode is not None) and (this.validPostcode in postcodeLocalities):
+                        thisState = None
+                        oneState = True
+                        for localityPid in postcodeLocalities[this.validPostcode]:
+                            for thisStatePid, thisSuburb, thisAlias in localities[localityPid]:
+                                if thisState is None:
+                                    thisState = thisStatePid
+                                elif thisState != thisStatePid:
+                                    oneState = False
+                                    break
+                            if not oneState:
+                                break
+                        if oneState and (thisState is not None):
+                            this.validState = thisState
     if (this.validState is None) and (this.validPostcode is None):
         this.logger.debug('Rules1and2 - no valid state or postcode')
         this.result['messages'].append('no valid state or postcode')
@@ -2618,7 +2679,7 @@ Add sources to this.validStreet for streets in this.validState and this.validPos
                     '''
                     this.parkedWrongState[this.fuzzLevel][streetKey][src][streetPid] = places[streetPid]
                     del places[streetPid]        # And remove it from places
-        if this.validPostcode is not None:
+        if (this.fuzzLevel < 9) and (this.validPostcode is not None):
             # Check if every street in these places is in this postcode
             # To do that we need to find the locality containing this streetPid
             # and then check all the postcodes associates with that locality
@@ -2662,47 +2723,74 @@ Create the set of validStreets using streetName, streetType and streetSuffix
         return
     this.logger.debug('createValidStreets - for street(%s)', this.street)
     this.logger.debug('createValidStreets - on entry, validStreets(%s)', repr(this.validStreets))
-    soundCode = jellyfish.soundex(this.streetName)
-    if soundCode not in streets:
-        this.logger.debug('createValidStreets - no street named %s, soundCode %s', this.streetName, soundCode)
-        return
-    streetType = this.streetType
-    streetSuffix = this.streetSuffix
-    if this.streetType is None:
-        streetType = ''
-        if this.streetSuffix is None:
-            streetSuffix = ''
-            streetKey = this.streetName + '~~'
-            shortKey = this.streetName
-        else:
-            streetKey = '~'.join([this.streetName, '', this.streetSuffix])
-            shortKey = ' '.join([this.streetName, this.streetSuffix]).strip()
-        if shortKey not in shortStreets:
-            if this.streetSuffix is None:
-                this.logger.debug('createValidStreets - no short street named %s, soundCode %s, streetKey %s', this.streetName, soundCode, streetKey)
+    foundStreet = False
+    thisStreet = this.streetName
+    thisSpace = thisStreet.find(' ')
+    while thisStreet is not None:
+        soundCode = jellyfish.soundex(thisStreet)
+        if soundCode in streets:
+            streetType = this.streetType
+            streetSuffix = this.streetSuffix
+            if this.streetType is None:
+                streetType = ''
+                if this.streetSuffix is None:
+                    streetSuffix = ''
+                    streetKey = thisStreet + '~~'
+                    shortKey = thisStreet
+                else:
+                    streetKey = '~'.join([thisStreet, '', streetSuffix])
+                    shortKey = ' '.join([thisStreet, streetSuffix]).strip()
+                if shortKey not in shortStreets:
+                    if this.streetSuffix is None:
+                        this.logger.debug('createValidStreets - no short street named %s, soundCode %s, streetKey %s', thisStreet, soundCode, streetKey)
+                    else:
+                        this.logger.debug('createValidStreets - no short street named %s %s, soundCode %s, streetKey %s', thisStreet, this.streetSuffix, soundCode, streetKey)
+                    if thisSpace != -1:
+                        thisStreet = thisStreet[thisSpace:].strip()
+                        thisSpace = thisStreet.find(' ')
+                    else:
+                        thisStreet = None
+                    continue
+                srcs = shortStreets[shortKey]
+            elif this.streetSuffix is None:
+                streetSuffix = ''
+                streetKey = '~'.join([thisStreet, streetType, ''])
+                if streetKey not in streets[soundCode]:
+                    this.logger.debug('createValidStreets - no street named %s %s, soundCode %s, streetKey %s', thisStreet, this.streetType, soundCode, streetKey)
+                    if thisSpace != -1:
+                        thisStreet = thisStreet[thisSpace:].strip()
+                        thisSpace = thisStreet.find(' ')
+                    else:
+                        thisStreet = None
+                    continue
+                srcs = streets[soundCode][streetKey]
+                this.logger.debug('createValidStreets - for street(%s)[%s]:%s', thisStreet, soundCode, streets[soundCode])
             else:
-                this.logger.debug('createValidStreets - no short street named %s %s, soundCode %s, streetKey %s', this.streetName, this.streetSuffix, soundCode, streetKey)
-            return
-        srcs = shortStreets[shortKey]
-    elif this.streetSuffix is None:
-        streetSuffix = ''
-        streetKey = '~'.join([this.streetName, this.streetType, ''])
-        if streetKey not in streets[soundCode]:
-            this.logger.debug('createValidStreets - no street named %s %s, soundCode %s, streetKey %s', this.streetName, this.streetType, soundCode, streetKey)
-            return
-        srcs = streets[soundCode][streetKey]
-    else:
-        streetKey = '~'.join([this.streetName, this.streetType, this.streetSuffix])
-        if streetKey not in streets[soundCode]:
-            this.logger.debug('createValidStreets - no street named %s %s %s, soundCode %s, streetKey %s', this.streetName, this.streetType, this.streetSuffix, soundCode, streetKey)
-            return
-        srcs = streets[soundCode][streetKey]
-    this.logger.debug('createValidStreets - streetKey(%s)', streetKey)
-    this.logger.debug('createValidStreets - sources(%s)', list(srcs))
-    if streetKey not in this.validStreets:
-        this.validStreets[streetKey] = {}
-        this.validStreets[streetKey]['SX'] = [soundCode, this.streetName, streetType, streetSuffix]
-    addSources(this, streetKey, srcs)
+                streetKey = '~'.join([thisStreet, streetType, streetSuffix])
+                if streetKey not in streets[soundCode]:
+                    this.logger.debug('createValidStreets - no street named %s %s %s, soundCode %s, streetKey %s', thisStreet, this.streetType, this.streetSuffix, soundCode, streetKey)
+                    if thisSpace != -1:
+                        thisStreet = thisStreet[thisSpace:].strip()
+                        thisSpace = thisStreet.find(' ')
+                    else:
+                        thisStreet = None
+                    continue
+                srcs = streets[soundCode][streetKey]
+            foundStreet = True
+            this.logger.debug('createValidStreets - streetKey(%s)', streetKey)
+            this.logger.debug('createValidStreets - sources(%s)', list(srcs))
+            this.logger.debug('createValidStreets - sources(%s)', srcs)
+            if streetKey not in this.validStreets:
+                this.validStreets[streetKey] = {}
+                this.validStreets[streetKey]['SX'] = [soundCode, thisStreet, streetType, streetSuffix]
+            addSources(this, streetKey, srcs)
+        if thisSpace != -1:
+            thisStreet = thisStreet[thisSpace:].strip()
+            thisSpace = thisStreet.find(' ')
+        else:
+            thisStreet = None
+    if not foundStreet:
+        this.logger.debug('createValidStreets - no street named %s, soundCode %s', this.streetName, soundCode)
     this.logger.debug('createValidStreets - on exit, validStreets(%s)', repr(this.validStreets))
     return
 
@@ -2734,7 +2822,7 @@ Check to see if any of the valid streets are in any of the valid suburbs
             if statePid == 'SX':
                 continue
             for src in this.validSuburbs[suburb][statePid]:
-                if src in ['G', 'GA', 'GS', 'GL', 'GN']:
+                if src in ['G', 'GA', 'GS', 'GL', 'GN', 'C']:
                     haveSuburbs = True
                     break
             if haveSuburbs:
@@ -3090,7 +3178,7 @@ based upon this.fuzzLevel
                             this.validSuburbs[otherSuburb][statePid] = {}
                         for src in suburbs[soundCode][otherSuburb][statePid]:
                             if src not in this.validSuburbs[otherSuburb][statePid]:
-                                if src not in ['G', 'GA']:            # Only use a G-NAF primary source
+                                if src not in ['G', 'GA', 'C']:            # Only use a G-NAF primary source and community names
                                     continue
                                 this.validSuburbs[otherSuburb][statePid][src + 'S'] = suburbs[soundCode][otherSuburb][statePid][src]
         # Add soundex suburbs to this.validSuburbs for all foundSuburbText, if not already in this.validSuburbs
@@ -3121,7 +3209,7 @@ based upon this.fuzzLevel
                         if statePid not in this.validSuburbs[otherSuburb]:
                             this.validSuburbs[otherSuburb][statePid] = {}
                         for src in suburbs[soundCode][otherSuburb][statePid]:
-                            if src not in ['G', 'GA']:            # Only use a G-NAF primary source
+                            if src not in ['G', 'GA', 'C']:            # Only use a G-NAF primary source and community names
                                 continue
                             if src not in this.validSuburbs[otherSuburb][statePid]:
                                 this.validSuburbs[otherSuburb][statePid][src + 'S'] = suburbs[soundCode][otherSuburb][statePid][src]
@@ -3135,7 +3223,7 @@ based upon this.fuzzLevel
                 if statePid == 'SX':
                     continue
                 for src in this.validSuburbs[suburb][statePid]:
-                    if src in ['G', 'GA']:
+                    if src in ['G', 'GA', 'C']:
                         toCheck = True
                         break
             if not toCheck:
@@ -3168,7 +3256,7 @@ based upon this.fuzzLevel
                                     if statePid not in this.validSuburbs[otherSuburb]:
                                         this.validSuburbs[otherSuburb][statePid] = {}
                                     for src in suburbs[soundCode][otherSuburb][statePid]:
-                                        if src not in ['G', 'GA']:            # Only use a G-NAF primary source
+                                        if src not in ['G', 'GA', 'C']:            # Only use a G-NAF primary source and community names
                                             continue
                                         if src not in this.validSuburbs[otherSuburb][statePid]:
                                             this.validSuburbs[otherSuburb][statePid][src + 'L'] = suburbs[soundCode][otherSuburb][statePid][src]
@@ -3204,7 +3292,7 @@ based upon this.fuzzLevel
                                     if statePid not in this.validSuburbs[otherSuburb]:
                                         this.validSuburbs[otherSuburb][statePid] = {}
                                     for src in suburbs[soundCode][otherSuburb][statePid]:
-                                        if src not in ['G', 'GA']:            # Only use a G-NAF primary source
+                                        if src not in ['G', 'GA', 'C']:            # Only use a G-NAF primary source and community names
                                             continue
                                         if src not in this.validSuburbs[otherSuburb][statePid]:
                                             this.validSuburbs[otherSuburb][statePid][src + 'L'] = suburbs[soundCode][otherSuburb][statePid][src]
@@ -3224,8 +3312,8 @@ based upon this.fuzzLevel
         bestSuburb(this)        # Compute the best suburbs
     elif this.fuzzLevel == 7:
         # Add back the soundex and levenshtein streets for this state
-        this.logger.info('expandSuburbAndStreets - adding soundex suburbs (same state)')
-        for thisLevel in [2, 3]:
+        this.logger.info('expandSuburbAndStreets - adding soundex suburbs (wrong postcode, same state)')
+        for thisLevel in [0, 2, 3]:
             if thisLevel not in this.parkedWrongPostcode:
                 continue
             if len(this.parkedWrongPostcode[thisLevel]) == 0:
@@ -3241,7 +3329,7 @@ based upon this.fuzzLevel
                     this.validStreets[streetKey][src].update(this.parkedWrongPostcode[thisLevel][streetKey][src])
     elif this.fuzzLevel == 8:
         # Add back the soundex and levenshtein streets for this state, from soundex and levenshtein suburbs
-        this.logger.info('expandSuburbAndStreets - adding soundex and Levenshtein streets (same state)')
+        this.logger.info('expandSuburbAndStreets - adding soundex and Levenshtein streets (wrong postcode, same state)')
         for thisLevel in [4, 5]:
             if thisLevel not in this.parkedWrongPostcode:
                 continue
@@ -3297,16 +3385,19 @@ based upon this.fuzzLevel
                         addSources(this, otherKey, srcs)
     elif this.fuzzLevel == 10:
         # Add streets from other states/postcodes (with the same soundex code)
-        this.logger.info('expandSuburbAndStreets - adding soundex streets (other state)')
-        if this.streetName is not None:
-            soundCode = jellyfish.soundex(this.streetName)
-            for streetKey in this.validStreets:
-                if this.validStreets[streetKey]['SX'][0] != soundCode:
-                    continue
-                for src in streets[soundCode][streetKey]:
-                    if src == 'SX':
-                        continue
-                    this.validStreets[streetKey][src] = streets[soundCode][streetKey][src]
+        this.logger.info('expandSuburbAndStreets - adding soundex and Levenshtein streets (other states)')
+        for thisLevel in this.parkedWrongState:
+            if len(this.parkedWrongState[thisLevel]) == 0:
+                continue
+            for streetKey in this.parkedWrongState[thisLevel]:
+                if streetKey not in this.validStreets:
+                    this.validStreets[streetKey] = {}
+                for src in this.parkedWrongState[thisLevel][streetKey]:
+                    if src not in this.validStreets[streetKey]:
+                        this.validStreets[streetKey][src] = {}
+                    this.logger.debug('fuzzLevel 7 - adding back (wrong state) street(%s), source(%s), places(%s)',
+                                     streetKey, src, repr(this.parkedWrongState[thisLevel][streetKey][src]))
+                    this.validStreets[streetKey][src].update(this.parkedWrongState[thisLevel][streetKey][src])
     return
 
 
@@ -3421,6 +3512,10 @@ And score this returned data
                 thisStatePid, thisSuburb, thisAlias = list(localities[locality])[0]
                 statePid = thisStatePid
                 suburb = thisSuburb
+                if thisAlias == 'C':
+                    this.result['isCommunity'] = True
+                else:
+                    this.result['isCommunity'] = False
             this.result['state'] = states[statePid][0]
             this.result['score'] &= ~3
             this.logger.debug('returnHouse - suburb(%s)', suburb)
@@ -3442,7 +3537,7 @@ And score this returned data
                         if statePid in suburbs[soundCode][suburb]:
                             if statePid not in this.validSuburbs[suburb]:
                                 this.validSuburbs[suburb][statePid] = {}
-                            for src in ['G', 'GA', 'A']:            # Only add primary sources
+                            for src in ['G', 'GA', 'A', 'C']:            # Only add primary sources and community names
                                 if (src in suburbs[soundCode][suburb][statePid]) and (src not in this.validSuburbs[suburb][statePid]):
                                     this.logger.debug('returnHouse - adding source(%s), for state(%s) for suburb(%s) to validSuburbs',
                                                       src, states[statePid][0], suburb)
@@ -3538,10 +3633,15 @@ And score the returned data
                 if thisAlias == 'P':        # Go for the first primary locality
                     statePid = thisStatePid
                     suburb = thisSuburb
+                    this.result['isCommunity'] = False
                     break
             if (suburb is None) or (statePid is None):
                 this.logger.critical('returnStreetPid - missing suburb (%s) or statePid (%s) - choosing from (%s)', suburb, statePid, localities[locality])
                 statePid, suburb, thisAlias = list(localities[locality])[0]
+                if thisAlias == 'C':
+                    this.result['isCommunity'] = True
+                else:
+                    this.result['isCommunity'] = False
             this.suburb = suburb
             this.result['suburb'] = suburb
             this.result['state'] = states[statePid][0]
@@ -3566,7 +3666,7 @@ And score the returned data
                         if statePid in suburbs[soundCode][suburb]:
                             if statePid not in this.validSuburbs[suburb]:
                                 this.validSuburbs[suburb][statePid] = {}
-                            for src in ['G', 'GA', 'A']:            # Only add primary sources
+                            for src in ['G', 'GA', 'A', 'C']:            # Only add primary sources and community names
                                 if (src in suburbs[soundCode][suburb][statePid]) and (src not in this.validSuburbs[suburb][statePid]):
                                     this.logger.debug('returnStreetPid - adding source(%s), for state(%s) for suburb(%s) to validSuburbs',
                                                       src, states[statePid][0], suburb)
@@ -3623,6 +3723,7 @@ The accuracy is
     this.result = {}
     this.result['id'] = ''
     this.result['isPostalService'] = False
+    this.result['isCommunity'] = False
     this.result['buildingName'] = ''
     this.result['houseNo'] = ''
     this.result['street'] = ''
@@ -3649,6 +3750,7 @@ The accuracy is
     this.foundSuburbText = []
     this.foundBuildings = []
     this.isPostalService = False
+    this.isCommunity = False
     this.street = None
     this.abbrevStreet = None
     this.streetName = None
@@ -4065,6 +4167,12 @@ The accuracy is
                 break
         # Scan for suburbs in extraText
         if extraText != '':
+            if indigenious:         # Check for COMMUNITY in address
+                for community in communityCodes:
+                    thisCommunity = community.search(extraText)
+                    if thisCommunity is not None:
+                        extraText = extraText[:thisCommunity.start()] + 'COMMUNITY' + extraText[thisCommunity.end():]
+                        this.logger.debug('Community (%s) found in extraText (%s)', thisCommunity.group(), extraText)
             leftOvers = scanForSuburb(this, extraText, 'backwards', False)
             if (leftOvers != extraText) and this.isPostalService:
                 # OUCH - we have a postal delivery service, followed by some address stuff, which includes a suburb!
@@ -4104,6 +4212,7 @@ The accuracy is
     Rules 1 and 2
     '''
     this.fuzzLevel = 0      # No fuzzy logic for Rules 1 and 2 tests
+    this.result['fuzzLevel'] = 0
     if not Rules1and2(this):
         # We have very little address data
         this.logger.debug('Failed Rules1and2')
@@ -4271,10 +4380,10 @@ The accuracy is
                 found = False
                 # Try and find a locality (in this postcode) for this suburb in this state
                 if (soundCode in suburbs) and (thisSuburb in suburbs[soundCode]) and (thisState in suburbs[soundCode][thisSuburb]):
-                    for src in ['G', 'GA', 'A', 'GS', 'AS', 'GL', 'AL', 'GN']:            # Select best geocode data
+                    for src in ['G', 'GA', 'C', 'A', 'GS', 'AS', 'GL', 'AL', 'GN']:            # Select best geocode data
                         if src in suburbs[soundCode][thisSuburb][thisState]:
-                            if src in ['A', 'AS', 'AL']:
-                                # Australia Post
+                            if src in ['A', 'AS', 'AL', 'C']:
+                                # Australia Post and community names
                                 if thisPostcode in suburbs[soundCode][thisSuburb][thisState][src]:
                                     SA1, LGA, latitude, longitude = suburbs[soundCode][thisSuburb][thisState][src[:1]][thisPostcode]
                                     gnafId = str(thisSuburb) + '~' + str(thisPostcode)
@@ -4391,6 +4500,7 @@ Validate an address against some known Australian concept (postcode, known Austr
                         help='Use suburb/state weights and fuzz levels from the config file')
     parser.add_argument('-a', '--abbreviate', dest='abbreviate', action='store_true', help='Output abbreviated street types')
     parser.add_argument('-b', '--returnBoth', dest='returnBoth', action='store_true', help='Output both full and abbreviated street types')
+    parser.add_argument('-i', '--indigenious', dest='indigenious', action='store_true', help='Search for Indigenious community addresses')
     parser.add_argument('-v', '--verbose', dest='verbose', type=int, choices=list(range(0, 5)),
                         help='The level of logging\n\t0=CRITICAL,1=ERROR,2=WARNING,3=INFO,4=DEBUG')
     parser.add_argument('-L', '--logDir', dest='logDir', default='.', help='The name of a logging directory')
@@ -4421,6 +4531,7 @@ Validate an address against some known Australian concept (postcode, known Austr
     configWeights = args.configWeights
     abbreviate = args.abbreviate
     returnBoth = args.returnBoth
+    indigenious = args.indigenious
     logDir = args.logDir
     logFile = args.logFile
     loggingLevel = args.verbose
@@ -4569,7 +4680,7 @@ Validate an address against some known Australian concept (postcode, known Austr
                     sys.exit(EX_USAGE)
                 for source in suburbSourceWeight:
                     if source not in suburbSourceWeight:
-                        if source not in ['G', 'GA', 'GN', 'GS', 'GL', 'GAS', 'GAL', '']:
+                        if source not in ['G', 'GA', 'GN', 'C', 'GS', 'GL', 'GAS', 'GAL', '']:
                             del suburbSourceWeight[source]
             if 'streetSourceWeight' in config['weights']:
                 streetSourceWeight = config['weights']['streetSourceWeight']
@@ -4764,11 +4875,11 @@ Validate an address against some known Australian concept (postcode, known Austr
             inFileHas = {}
             count = 0
             if returnBoth:
-                headingParts = ['isPostalService', 'Building Name', 'House No.', 'Street', 'AddressLine1', 'AddressLine2', 'AddressLine1Abbrev', 'AddressLine2Abbrev', 'Suburb', 'State', 'Postcode', 'SA1', 'LGA', 'Mesh Block', 'Longitude', 'Latitude', 'G-NAF ID', 'Accuracy', 'Fuzz Level', 'Score', 'Status', 'Message', 'Changed']
-                addressParts = ['isPostalService', 'buildingName', 'houseNo', 'street', 'addressLine1', 'addressLine2', 'addressLine1Abbrev', 'addressLine2Abbrev', 'suburb', 'state', 'postcode', 'SA1', 'LGA', 'Mesh Block', 'latitude', 'longitude', 'G-NAF ID', 'accuracy', 'fuzzLevel', 'score', 'status', 'messages']
+                headingParts = ['isPostalService', 'isCommunity', 'Building Name', 'House No.', 'Street', 'AddressLine1', 'AddressLine2', 'AddressLine1Abbrev', 'AddressLine2Abbrev', 'Suburb', 'State', 'Postcode', 'SA1', 'LGA', 'Mesh Block', 'Longitude', 'Latitude', 'G-NAF ID', 'Accuracy', 'Fuzz Level', 'Score', 'Status', 'Message', 'Changed']
+                addressParts = ['isPostalService', 'isCommunity', 'buildingName', 'houseNo', 'street', 'addressLine1', 'addressLine2', 'addressLine1Abbrev', 'addressLine2Abbrev', 'suburb', 'state', 'postcode', 'SA1', 'LGA', 'Mesh Block', 'latitude', 'longitude', 'G-NAF ID', 'accuracy', 'fuzzLevel', 'score', 'status', 'messages']
             else:
-                headingParts = ['isPostalService', 'Building Name', 'House No.', 'Street', 'AddressLine1', 'AddressLine2', 'Suburb', 'State', 'Postcode', 'SA1', 'LGA', 'Mesh Block', 'Longitude', 'Latitude', 'G-NAF ID', 'Accuracy', 'Fuzz Level', 'Score', 'Status', 'Message', 'Changed']
-                addressParts = ['isPostalService', 'buildingName', 'houseNo', 'street', 'addressLine1', 'addressLine2', 'suburb', 'state', 'postcode', 'SA1', 'LGA', 'Mesh Block', 'latitude', 'longitude', 'G-NAF ID', 'accuracy', 'fuzzLevel', 'score', 'status', 'messages']
+                headingParts = ['isPostalService', 'isCommunity', 'Building Name', 'House No.', 'Street', 'AddressLine1', 'AddressLine2', 'Suburb', 'State', 'Postcode', 'SA1', 'LGA', 'Mesh Block', 'Longitude', 'Latitude', 'G-NAF ID', 'Accuracy', 'Fuzz Level', 'Score', 'Status', 'Message', 'Changed']
+                addressParts = ['isPostalService', 'isCommunity', 'buildingName', 'houseNo', 'street', 'addressLine1', 'addressLine2', 'suburb', 'state', 'postcode', 'SA1', 'LGA', 'Mesh Block', 'latitude', 'longitude', 'G-NAF ID', 'accuracy', 'fuzzLevel', 'score', 'status', 'messages']
             for line in lines:
                 line = line.strip()
                 if hasHeading:
@@ -4887,6 +4998,7 @@ Validate an address against some known Australian concept (postcode, known Austr
                     print('Original text:', line, file=fpOut)
                     print('Structured address:', file=fpOut)
                     print('Postal Delivery Service address:', verifydata.result['isPostalService'], file=fpOut)
+                    print('Community address:', verifydata.result['isCommunity'], file=fpOut)
                     print('House No.:', verifydata.result['houseNo'], file=fpOut)
                     if (verifydata.result['isPostalService']) and (verifydata.result['buildingName'] != ''):
                         print('Building Name:', verifydata.result['buildingName'], file=fpOut)

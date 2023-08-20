@@ -26,3 +26,9 @@ ABS/LGA/*.csv
 ABS/LGA/*.dbf
 ABS/LGA/*.shp
 ABS/LGA/*.shx
+ABS/ILOC/*.dbf
+ABS/ILOC/*.shp
+ABS/ILOC/*.shx
+ABS/PostalAreas/*.dbf
+ABS/PostalAreas/*.shp
+ABS/PostalAreas/*.shx
