@@ -45,7 +45,6 @@ import argparse
 import logging
 import csv
 import shapefile
-import re
 
 
 # This next section is plagurised from /usr/include/sysexits.h
@@ -120,25 +119,25 @@ Find the nearest polygon to this long and lat
     '''
     # Find the nearest polygon to this point
     nearestDist = nearestI = None
-    for i, shape in enumerate(shapes):
+    for ii, thisShape in enumerate(shapes):
         # Only check polygons
-        if shape.shapeType != 5:        # Not a polygon
+        if thisShape.shapeType != 5:        # Not a polygon
             continue
-        parts = shape.parts
+        theseParts = thisShape.parts
         # The last "part" can be the number of points - an end if list marker.
-        if parts[-1] != len(shape.points):
+        if theseParts[-1] != len(thisShape.points):
             # If not, add the this extra dummy part - the end of list marker
-            parts.append(len(shape.points))
-        for part in range(len(parts) - 1):        # Don't analyse the dummy part
-            point2 = list(shape.points[parts[part]])        # The first point
+            theseParts.append(len(thisShape.points))
+        for thisPart in range(len(theseParts) - 1):        # Don't analyse the dummy part
+            point2 = list(thisShape.points[theseParts[thisPart]])        # The first point
             p2Long = point2[0]
             p2Lat = point2[1]
-            for j in range(parts[part], parts[part + 1] - 1):
+            for j in range(theseParts[thisPart], theseParts[thisPart + 1] - 1):
                 # The last end is the new beginning
                 p1Long = p2Long
                 p1Lat = p2Lat
                 # Get the new end
-                point2 = list(shape.points[j + 1])
+                point2 = list(thisShape.points[j + 1])
                 p2Long = point2[0]
                 p2Lat = point2[1]
                 # Calculate the length of the segment
@@ -156,7 +155,7 @@ Find the nearest polygon to this long and lat
                     dist = (long - midLong)**2 + (lat - midLat)**2
                 if (nearestDist is None) or (dist < nearestDist):
                     nearestDist = dist
-                    nearestI = i
+                    nearestI = ii
     if nearestI is not None:
         return records[nearestI][0]
     else:
@@ -169,57 +168,57 @@ Find a polygon that contains this long and lat
     '''
     # Find a polygon that contains this point
     # Each shape has a bounding box and a number of parts
-    for i, shape in enumerate(shapes):
+    for ii, thisShape in enumerate(shapes):
         # Only check polygons
-        if shape.shapeType != 5:        # Not a polygon
+        if thisShape.shapeType != 5:        # Not a polygon
             continue
         # Check if this point is inside or outside this polygon's bounding box
         # Bounding Box is (bottom left, upper right) - check that this point is inside the bounding box
-        if long < shape.bbox[0]:   # This point is more easterly than the polygon
+        if long < thisShape.bbox[0]:   # This point is more easterly than the polygon
             continue
-        if long > shape.bbox[2]:   # This point is more westerly than the polygon
+        if long > thisShape.bbox[2]:   # This point is more westerly than the polygon
             continue
-        if lat < shape.bbox[1]:    # This point is more southerly than the polygon
+        if lat < thisShape.bbox[1]:    # This point is more southerly than the polygon
             continue
-        if lat > shape.bbox[3]:    # This point is more northerly than the polygon
+        if lat > thisShape.bbox[3]:    # This point is more northerly than the polygon
             continue
         logging.debug('Checking:%s', records[i][0])
         # There may be multiple "rings" in this polygon
         # Basically sub-sets of point, which make up each set
-        parts = shape.parts
+        theseParts = thisShape.parts
         # The last "part" can be the number of points - an end if list marker.
-        if parts[-1] != len(shape.points):
+        if theseParts[-1] != len(thisShape.points):
             # If not, add the this extra dummy part - the end of list marker
-            parts.append(len(shape.points))
-        for part in range(len(parts) - 1):        # Don't analyse the dummy part
+            theseParts.append(len(thisShape.points))
+        for thisPart in range(len(theseParts) - 1):        # Don't analyse the dummy part
             # Count the number of time an imaginary line going East from this point intersects a polygon line segment
             count = 0
             # There's one less line segment than there are polygon points
             # The end of the previous line segment is the start of the next line segment
-            point2 = list(shape.points[parts[part]])        # The first point
+            point2 = list(thisShape.points[theseParts[thisPart]])        # The first point
             p2Long = point2[0]
             p2Lat = point2[1]
             # On the edge at the start is in, so if this is the point, then we are done
             if (long == p2Long) and (lat == p2Lat):
                 logging.debug('Point for loc_pid(%s)[%.7f,%.7f] is the start of the first line segment',
                              loc_pid, long, lat)
-                return records[i][0]
+                return records[ii][0]
             crossings = []
             # Check each line segment (from point[j] to point[j + 1])
-            logging.debug('Checking from %d to %d', parts[part], parts[part + 1] - 1)
-            for j in range(parts[part], parts[part + 1] - 1):
+            logging.debug('Checking from %d to %d', theseParts[thisPart], theseParts[thisPart + 1] - 1)
+            for j in range(theseParts[thisPart], theseParts[thisPart + 1] - 1):
                 # The last end is the new beginning
                 p1Long = p2Long
                 p1Lat = p2Lat
                 # Get the new end
-                point2 = list(shape.points[j + 1])
+                point2 = list(thisShape.points[j + 1])
                 p2Long = point2[0]
                 p2Lat = point2[1]
                 # On the edge is in, so if the test point is the next point, then we are done
                 if (long == p2Long) and (lat == p2Lat):
                     logging.debug('Point for loc_pid(%s)[%.7f,%.7f] is the end of a line segment',
                                  loc_pid, long, lat)
-                    return records[i][0]
+                    return records[ii][0]
 
                 # Don't count lines that will touch the end point - that would create double counting
                 if p2Lat == lat:        # Don't count lines that will touch the end point - that would create double counting
@@ -229,12 +228,12 @@ Find a polygon that contains this long and lat
                 # Crossing a segment at the start of the segment, when the start is a North/South inflection point
                 # isn't crossing in, or out, of the polygon
                 # Check if the previous segment and this segment are a North/South inflection
-                if j == parts[part]:      # if this is the first segment then the previous segment is actually the last segment
+                if j == theseParts[thisPart]:      # if this is the first segment then the previous segment is actually the last segment
                     # The polygon should be closed, in which case the previous segment start
-                    l = parts[part + 1] - 2
+                    l = theseParts[thisPart + 1] - 2
                 else:
                     l = j - 1   # otherwise the previous segment starts one point back
-                pointL = list(shape.points[l])
+                pointL = list(thisShape.points[l])
                 plLat = pointL[1]
                 plLong = pointL[0]
                 logging.debug('Checking end inflection for [%.7f,%.7f],[%.7f,%.7f],[%.7f,%.7f]',
@@ -254,7 +253,7 @@ Find a polygon that contains this long and lat
                 logging.debug('%s', repr(inflection))
                 (crosses, isEdge) = checkCrossing(lat, long, p1Lat, p1Long, p2Lat, p2Long, inflection)
                 if isEdge:            # On the line is in
-                    return records[i][0]
+                    return records[ii][0]
                 if crosses:             # Crosses or is on the edge
                     count += 1          # Count the crossings
                     crossings.append([p1Long, p1Lat, p2Long, p2Lat])
@@ -265,12 +264,12 @@ Find a polygon that contains this long and lat
             # then the point is outside the polygon.
             # Points inside the polygon must intersect an odd number of line segments
             if (count % 2) == 1:        # The point is inside this polygon
-                return records[i][0]
+                return records[ii][0]
             else:                       # The point is inside the polygon bounding box, outside the polygon
                 logging.debug('loc_pid(%s) is inside bounding box(%s)',
-                             loc_pid, repr(shape.bbox))
+                             loc_pid, repr(thisShape.bbox))
                 logging.debug('but loc_pid(%s) crosses polygon (%s) times', loc_pid, count)
-                logging.debug('polygon(%s)', repr(shape.points[parts[part]:parts[part + 1]]))
+                logging.debug('polygon(%s)', repr(thisShape.points[theseParts[thisPart]:theseParts[thisPart + 1]]))
                 for j, cross in enumerate(crossings):
                     logging.debug('crossings[%s]', repr(cross))
 
@@ -360,7 +359,7 @@ Finally find the Postal Areas, SA1 and LGA polygons that bound this point.
     # Open the output file
     communitySA1LGAfile =  open(CommunitySA1LGAoutputFile, 'wt', newline='', encoding='utf-8')
     communitySA1LGAwriter = csv.writer(communitySA1LGAfile, dialect=csv.excel, delimiter='|')
-    outRow = ['community_pid', 'state_pid', 'community_name', 'Postcode', 'SA1_MAINCODE_2016', 'LGA_CODE_2020', 'longitude', 'latitude']
+    outRow = ['community_pid', 'community_name', 'state_pid', 'Postcode', 'SA1_MAINCODE_2016', 'LGA_CODE_2020', 'longitude', 'latitude']
     communitySA1LGAwriter.writerow(outRow)
 
     # Next read in all the locality names

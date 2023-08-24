@@ -191,7 +191,7 @@ verifyAddressPort = None        # The service port
 GNAFdir = None                  # Use the standard G-NAF psv files from this folder
 ABDdir = None                   # The directory where the standard ABS csv files will be found (default='./G-NAF')
 DataDir = '.'                   # The directory where the data files will be found
-NTpostcodes = False             # Assume 8xx in NT postcode 08xx
+NTpostcodes = False             # Assume 8xx is NT postcode 08xx
 region = False                  # Assume Australian region (State/Territory) if no state/territory supplied, but a unique suburb found
 DatabaseType = None             # The database type
 engine = None                   # The database engine
@@ -1283,7 +1283,7 @@ def initData(this):
 
     # Read in indigenious communities if required
     if indigenious:
-        # community_pid|state_pid|community_name|Postcode|SA1_MAINCODE_2016|LGA_CODE_2020|longitude|latitude
+        # community_pid|community_name|state_pid|Postcode|SA1_MAINCODE_2016|LGA_CODE_2020|longitude|latitude
         with open(os.path.join(DataDir, 'community_SA1LGA.psv'), 'rt', newline='', encoding='utf-8') as SA1File:
             SA1Reader = csv.DictReader(SA1File, dialect=csv.excel, delimiter='|')
             for rrow in SA1Reader:
@@ -2362,8 +2362,6 @@ If not, then we only have state and postcode, so look for a building that is wit
     this.suburb = matchingSuburb
     if matchingAlias == 'C':
         this.result['isCommunity'] = True
-    else:
-        this.result['isCommunity'] = False
     this.result['suburb'] = this.suburb
     this.result['postcode'] = list(localityPostcodes[localityPid])[0]
     thisState = states[matchingState][0]
@@ -2403,7 +2401,6 @@ Set up accuracy 2 return values
                 this.result['LGA'] = suburbs[soundCode][thisSuburb][statePid][src][key][1]
                 this.result['latitude'] = suburbs[soundCode][thisSuburb][statePid][src][key][2]
                 this.result['longitude'] = suburbs[soundCode][thisSuburb][statePid][src][key][3]
-                this.result['isCommunity'] = False
                 if src in  ['A', 'C']:            # Australia Post suburbs and community names
                     if src == 'C':
                         this.result['isCommunity'] = True
@@ -3507,6 +3504,7 @@ And score this returned data
                 if thisAlias == 'P':        # Go for the first primary locality
                     statePid = thisStatePid
                     suburb = thisSuburb
+                    this.result['isCommunity'] = False
                     break
             if suburb is None:
                 thisStatePid, thisSuburb, thisAlias = list(localities[locality])[0]
@@ -3514,8 +3512,6 @@ And score this returned data
                 suburb = thisSuburb
                 if thisAlias == 'C':
                     this.result['isCommunity'] = True
-                else:
-                    this.result['isCommunity'] = False
             this.result['state'] = states[statePid][0]
             this.result['score'] &= ~3
             this.logger.debug('returnHouse - suburb(%s)', suburb)
@@ -3545,6 +3541,11 @@ And score this returned data
                                     this.validSuburbs[suburb][statePid][src] = suburbs[soundCode][suburb][statePid][src]
             scoreSuburb(this, suburb, statePid)
             this.result['score'] &= ~12
+            if (postcode is None) and (this.validPostcode is not None):       # Check if an alias of suburb has this postcode
+                for thisStatePid, thisSuburb, thisAlias in localities[locality]:
+                    if (this.validPostcode in postcodes) and (thisSuburb in postcodes[this.validPostcode]):
+                        postcode = this.validPostcode
+                        this.logger.debug('returnHouse - postcode [from postcodes] for locality(%s) is (%s)', locality, postcode)
             if postcode is not None:
                 this.logger.debug('returnHouse - setting postcode to (%s)', postcode)
                 this.result['postcode'] = postcode
@@ -3640,8 +3641,6 @@ And score the returned data
                 statePid, suburb, thisAlias = list(localities[locality])[0]
                 if thisAlias == 'C':
                     this.result['isCommunity'] = True
-                else:
-                    this.result['isCommunity'] = False
             this.suburb = suburb
             this.result['suburb'] = suburb
             this.result['state'] = states[statePid][0]
@@ -3660,18 +3659,22 @@ And score the returned data
                 # Only add exact matches for this suburb
                 if (soundCode in suburbs) and (suburb in suburbs[soundCode]):
                     this.logger.debug('returnStreetPid - adding suburb(%s) to validSuburbs', suburb)
-                    if suburb not in this.validSuburbs:
-                        this.validSuburbs[suburb] = {}
-                        this.validSuburbs[suburb]['SX'] = [soundCode, False]
-                        if statePid in suburbs[soundCode][suburb]:
-                            if statePid not in this.validSuburbs[suburb]:
-                                this.validSuburbs[suburb][statePid] = {}
-                            for src in ['G', 'GA', 'A', 'C']:            # Only add primary sources and community names
-                                if (src in suburbs[soundCode][suburb][statePid]) and (src not in this.validSuburbs[suburb][statePid]):
-                                    this.logger.debug('returnStreetPid - adding source(%s), for state(%s) for suburb(%s) to validSuburbs',
-                                                      src, states[statePid][0], suburb)
-                                    this.logger.debug('returnStreetPid - (%s)', repr(sorted(suburbs[soundCode][suburb][statePid][src])))
-                                    this.validSuburbs[suburb][statePid][src] = suburbs[soundCode][suburb][statePid][src]
+                    # Check if this suburb is an alias of a suburb in this.validSuburbs
+                    isAPI = False
+                    for thisStatePid, thisSuburb, thisAlias in localities[locality]:
+                        if thisSuburb in this.validSuburbs:
+                            isAPI = this.validSuburbs[thisSuburb]['SX'][1]
+                    this.validSuburbs[suburb] = {}
+                    this.validSuburbs[suburb]['SX'] = [soundCode, isAPI]
+                    if statePid in suburbs[soundCode][suburb]:
+                        if statePid not in this.validSuburbs[suburb]:
+                            this.validSuburbs[suburb][statePid] = {}
+                        for src in ['G', 'GA', 'A', 'C']:            # Only add primary sources and community names
+                            if (src in suburbs[soundCode][suburb][statePid]) and (src not in this.validSuburbs[suburb][statePid]):
+                                this.logger.debug('returnStreetPid - adding source(%s), for state(%s) for suburb(%s) to validSuburbs',
+                                                  src, states[statePid][0], suburb)
+                                this.logger.debug('returnStreetPid - (%s)', repr(sorted(suburbs[soundCode][suburb][statePid][src])))
+                                this.validSuburbs[suburb][statePid][src] = suburbs[soundCode][suburb][statePid][src]
             # Score suburb
             scoreSuburb(this, suburb, statePid)
             this.result['score'] &= ~12
@@ -3750,7 +3753,6 @@ The accuracy is
     this.foundSuburbText = []
     this.foundBuildings = []
     this.isPostalService = False
-    this.isCommunity = False
     this.street = None
     this.abbrevStreet = None
     this.streetName = None
@@ -4172,6 +4174,7 @@ The accuracy is
                     thisCommunity = community.search(extraText)
                     if thisCommunity is not None:
                         extraText = extraText[:thisCommunity.start()] + 'COMMUNITY' + extraText[thisCommunity.end():]
+                        this.result['isCommunity'] = True
                         this.logger.debug('Community (%s) found in extraText (%s)', thisCommunity.group(), extraText)
             leftOvers = scanForSuburb(this, extraText, 'backwards', False)
             if (leftOvers != extraText) and this.isPostalService:
@@ -4320,8 +4323,8 @@ The accuracy is
             else:
                 thisSuburb = sorted(list(this.validSuburbs))[0]            # Pick the first one and try and work out the state and postcode
             if thisPostcode is not None:            # We have a postcode in postcodes to work with
-                if len(postcodes[thisPostcode]['states']) > 1:
-                    # The specified postcode crosses a state boundary - so state cannot be determined
+                if (len(postcodes[thisPostcode]['states']) > 1) and (thisState is None):
+                    # We have no state and the specified postcode crosses a state boundary - so state cannot be determined
                     this.result['suburb'] = thisSuburb
                     this.result['score'] = 0
                     this.result['score'] |= 16            # A suburb was supplied
