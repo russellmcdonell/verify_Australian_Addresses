@@ -4219,9 +4219,9 @@ The accuracy is
         words = addressLine.split(' ')
         at = 0
         for ii, word in enumerate(words):
+            soundCode = jellyfish.soundex(word)
             if ii > 0:
                 at += len(words[ii - 1]) + 1
-                soundCode = jellyfish.soundex(word)
                 if soundCode in streetTypeSound:
                     streetType = streetTypeSound[soundCode][0]
                     maxDist = int(len(streetType) / 2)
