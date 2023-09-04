@@ -3434,11 +3434,14 @@ based upon this.fuzzLevel
                     srcs = streets[soundCode][otherKey]
                     addSources(this, otherKey, srcs)
                 # Check if street type was just missing
+                if otherType == '':
+                    continue
                 longSoundCode = jellyfish.soundex(streetName + ' ' + streetType)
                 if streetSuffix is None:
                     otherKey = '~'.join([streetName + ' ' + streetType, otherType, ''])
                 else:
                     otherKey = '~'.join([streetName + ' ' + streetType, otherType, streetSuffix])
+                this.logger.debug('expandSuburbAndStreets - checking street (%s), key (%s)', streetName + ' ' + streetType, otherKey)
                 if (longSoundCode in streets) and (otherKey in streets[longSoundCode]):
                     if otherKey not in this.validStreets:
                         this.validStreets[otherKey] = {}
@@ -3447,6 +3450,7 @@ based upon this.fuzzLevel
                     addSources(this, otherKey, srcs)
 
         # Add streets with different street types to this.streetName, this.streetType for this.streetName
+        this.logger.debug('expandSuburbAndStreets - checking street (%s), streetType (%s)', this.streetName, this.streetType)
         if this.streetName is not None:
             for otherType in list(streetTypes) + ['']:            # All the street type, plus no street type
                 if (this.streetType is not None) and (otherType == this.streetType):
@@ -3466,11 +3470,14 @@ based upon this.fuzzLevel
                 # Check if street type was just missing
                 if this.streetType is None:
                     continue
+                if otherType == '':
+                    continue
                 longSoundCode = jellyfish.soundex(this.streetName + ' ' + this.streetType)
                 if this.streetSuffix is None:
                     otherKey = '~'.join([this.streetName + ' ' + this.streetType, otherType, ''])
                 else:
                     otherKey = '~'.join([this.streetName + ' ' + this.streetType, otherType, this.streetSuffix])
+                this.logger.debug('expandSuburbAndStreets - checking street (%s), key (%s)', this.streetName + ' ' + this.streetType, otherKey)
                 if (longSoundCode in streets) and (otherKey in streets[longSoundCode]):
                     if otherKey not in this.validStreets:
                         this.validStreets[otherKey] = {}
@@ -4188,6 +4195,7 @@ The accuracy is
                         streetEnd = foundEnd
             if streetAt is not None:
                 this.streetName = addressLine[streetAt:streetEnd].strip()
+                this.logger.debug('Short street found (%s)', this.streetName)
                 streetTypeAt = None
                 this.streetType = None
                 if this.streetName == '':
@@ -4199,10 +4207,20 @@ The accuracy is
                     this.trim = addressLine[:streetAt]
                     trimEnd = len(this.trim)
                 extraText = addressLine[streetEnd:].strip()
-            else:
+            elif streetTypeAt is None:
                 this.streetName = None
                 extraText = addressLine
+            else:
+                this.logger.debug('Removing street type (%s), at (%d) from addressLine (%s)', this.streetType, streetTypeAt, addressLine)
+                this.streetName = addressLine[:streetTypeAt].strip()        # Includes trim
+                if this.streetName == '':
+                    this.streetName = None
+                elif (lastDigits is None) and (trimEnd > streetTypeAt):
+                    this.trim = None
+                    trimEnd = 0
+                extraText = addressLine[streetTypeEnd:].strip()
         else:
+            this.logger.debug('Removing street type (%s), at (%d) from addressLine (%s)', this.streetType, streetTypeAt, addressLine)
             this.streetName = addressLine[:streetTypeAt].strip()        # Includes trim
             if this.streetName == '':
                 this.streetName = None
