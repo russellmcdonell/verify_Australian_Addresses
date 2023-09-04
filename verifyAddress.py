@@ -2776,7 +2776,7 @@ Create the set of validStreets using streetName, streetType and streetSuffix
                     else:
                         thisStreet = None
                     continue
-                    this.streetName = shortKey
+                this.streetName = shortKey
                 srcs = shortStreets[shortKey]
             elif streetSuffix == '':
                 streetKey = '~'.join([thisStreet, streetType, ''])
