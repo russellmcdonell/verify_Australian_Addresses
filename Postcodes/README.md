@@ -17,6 +17,13 @@ Has 'OT' places like Norfolk Island/Chrismas island with correct latitude/longit
 Has the Antartic bases with **no latitude/longitude** and the **State is TAS**  
 File: geocoded_postcode_file_pc004_18012021.csv  
 
+geonames.org
+Licensed under a Creative Commons Attribution 4.0 License [you give credit to geonames (a link on your website to www.geonames.org is ok) see http://creativecommons.org/licenses/by/3.0/]
+Has data for "non-suburb postcodes" such a 0821 - which is just P.O. Boxes with latitude/longitude
+Has 'OT' places like Norfolk Island/Chrismas island with latitude/longitude but the **State is nearest mainland state**  
+Has the Antartic bases, but **latiude/longitude is the delivery point in Hobart** and the **State is TAS**  
+File: AU.txt  
+
 matthewproctor.com/australian_postcodes or github.com/mtthewproctor/australianpostcodes  
 Free (Buy him a coffee)  
 Includes SA4 and SA3 data (no SA1 or LGA)  
