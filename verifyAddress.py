@@ -671,10 +671,6 @@ def addSuburb(this, localityPid, statePid, suburb, alias, sa1, lga, latitude, lo
         if 'G' not in suburbs[soundCode][suburb][statePid]:
             suburbs[soundCode][suburb][statePid]['G'] = {}
         suburbs[soundCode][suburb][statePid]['G'][localityPid] = [sa1, lga, latitude, longitude]
-    elif alias == 'A':
-        if 'A' not in suburbs[soundCode][suburb][statePid]:
-            suburbs[soundCode][suburb][statePid]['A'] = {}
-        suburbs[soundCode][suburb][statePid]['A'][localityPid] = [sa1, lga, latitude, longitude]
     elif alias == 'C':
         if 'C' not in suburbs[soundCode][suburb][statePid]:
             suburbs[soundCode][suburb][statePid]['C'] = {}
@@ -701,7 +697,7 @@ def addLocality(this, localityPid, suburb, postcode, statePid, alias):
     '''
     Add locality data from LOCALITY, LOCALITY_ALIAS, locality.psv
     '''
-    # this.logger.debug('Adding locality %s', suburb)
+    # this.logger.debug('Adding locality %s with postcode (%s) and statePid (%s)', suburb, postcode, statePid)
 
     if localityPid not in localities:
         localities[localityPid] = set()
@@ -717,6 +713,10 @@ def addLocality(this, localityPid, suburb, postcode, statePid, alias):
         if localityPid not in localityPostcodes:
             localityPostcodes[localityPid] = set()
         localityPostcodes[localityPid].add(postcode)
+        if postcode not in postcodes:
+            postcodes[postcode] = {}
+            postcodes[postcode]['states'] = set()
+        postcodes[postcode]['states'].add(statePid)
     if alias not in ['P', 'C']:            # Don't clone postcodes for locality aliases
         return
     soundCode = jellyfish.soundex(suburb)
@@ -772,8 +772,12 @@ def addStreetName(this, streetPid, streetName, streetType, streetSuffix, localit
         streetLocalities[streetPid] = localityPid
     if localityPid not in localities:
         return
+    done = set()
     for thisStatePid, thisSuburb, thisAlias in localities[localityPid]:
         statePid = thisStatePid
+        if statePid in done:
+            continue
+        done.add(statePid)
         if statePid not in stateStreets:
             stateStreets[statePid] = set()
         stateStreets[statePid].add(streetPid)
@@ -859,7 +863,12 @@ def addStreetNumber(this, buildingName, streetPid, localityPid, postcode, lotNum
     '''
     # this.logger.debug('Adding street number %s', str(numberFirst))
     if localityPid in localities:       # Count properties in this suburb
+        done = set()
         for thisStatePid, thisSuburb, thisAlias in localities[localityPid]:
+            thisThing = thisStatePid + '~' + thisSuburb
+            if thisThing in done:
+                continue
+            done.add(thisThing)
             if thisSuburb not in suburbCount:
                 suburbCount[thisSuburb] = {}
             if thisStatePid not in suburbCount[thisSuburb]:
@@ -1317,6 +1326,12 @@ def initData(this):
                 lga = rrow['LGA_CODE_2020']
                 longitude = rrow['longitude']
                 latitude = rrow['latitude']
+                if suburb == '':
+                    postcodes[postcode][suburb] = [sa1, lga, latitude, longitude]
+                else:
+                    if suburb not in postcodes[postcode]:
+                        postcodes[postcode][suburb] = {}
+                    postcodes[postcode][suburb][statePid] = [sa1, lga, latitude, longitude]
                 addSuburb(this, localityPid, statePid, suburb, alias, sa1, lga, latitude, longitude)
         # description
         with open(os.path.join(DataDir, 'community.txt'), 'rt', newline='', encoding='utf-8') as communityFile:
@@ -1971,7 +1986,27 @@ Return anything left over
         elif parts[ii].endswith(' W.'):
             parts[ii] = parts[ii][:-2] + 'WEST'
 
+    extraParts = []
     for thisPart in parts:
+        if thisPart.endswith(' NORTH'):
+            extraParts.append('NORTH ' + thisPart[:-6])
+        if thisPart.startswith('NORTH '):
+            extraParts.append(thisPart[6:] + ' NORTH')
+        if thisPart.endswith(' SOUTH'):
+            extraParts.append('SOUTH ' + thisPart[:-6])
+        if thisPart.startswith('SOUTH '):
+            extraParts.append(thisPart[6:] + ' SOUTH')
+        if thisPart.endswith(' EAST'):
+            extraParts.append('EAST ' + thisPart[:-5])
+        if thisPart.startswith('EAST '):
+            extraParts.append(thisPart[5:] + ' EAST')
+        if thisPart.endswith(' WEST'):
+            extraParts.append('WEST ' + thisPart[:-5])
+        if thisPart.startswith('WEST '):
+            extraParts.append(thisPart[5:] + ' WEST')
+
+    allParts = parts + extraParts
+    for thisPart in allParts:
         this.logger.debug('scanForSuburb[%s] - saving parts (%s)', direction, thisPart)
         if direction == 'forwards':
             this.foundSuburbText.append((thisPart, isAPI))       # Add all parts as possible suburbs
@@ -1980,10 +2015,10 @@ Return anything left over
     if direction == 'forwards':
         partNo = 0
     else:
-        partNo = len(parts) - 1
-    while ((direction == 'forwards') and (partNo < len(parts)) or ((direction) != 'forwards') and (partNo >= 0)):
-        this.logger.debug('scanForSuburb[%s] - scanning part (%s)', direction, parts[partNo])
-        subParts = parts[partNo].split(' ')
+        partNo = len(allParts) - 1
+    while ((direction == 'forwards') and (partNo < len(allParts)) or ((direction) != 'forwards') and (partNo >= 0)):
+        this.logger.debug('scanForSuburb[%s] - scanning part (%s)', direction, allParts[partNo])
+        subParts = allParts[partNo].split(' ')
         firstSubPart = 0
         endSubPart = len(subParts)
         while firstSubPart < endSubPart:
@@ -2024,15 +2059,15 @@ Return anything left over
             else:
                 firstSubPart = 0
                 endSubPart -= 1
-        parts[partNo] = ' '.join(subParts)    # Restore what's left of this part and move on to the nex part
+        allParts[partNo] = ' '.join(subParts)    # Restore what's left of this part and move on to the nex part
         if direction == 'forwards':
             partNo += 1
         else:
             partNo -= 1
-    for ii in range(len(parts) -1, -1, -1):        # Clean up any parts that became empty (removed as they were matched)
-        if parts[ii] == '':
-            del parts[ii]
-    return ' '.join(parts)        # Return what's left
+    for ii in range(len(allParts) -1, -1, -1):        # Clean up any allParts that became empty (removed as they were matched)
+        if allParts[ii] == '':
+            del allParts[ii]
+    return ' '.join(allParts)        # Return what's left
 
 
 def removeFlats(this, addressLine, trimEnd):
@@ -2139,6 +2174,8 @@ def bestSuburb(this):
     '''
 Find the best suburb from this.validSuburbs
     '''
+
+    this.logger.debug('bestSuburb - from validSuburbs (%s) in state (%s) with postcode (%s)', this.validSuburbs, this.validState, this.validPostcode)
 
     this.suburbInState = set()
     this.suburbInPostcode = set()
@@ -2410,6 +2447,7 @@ If not, then we only have state and postcode, so look for a building that is wit
     this.result['state'] = thisState
     this.logger.debug('scoreBuilding - best building: buildingName (%s), houseNo (%s), street (%s), suburb (%s)', buildingName, houseNo, streetName, matchingSuburb)
     meshBlock = streetNos[streetPid][houseNo][0]
+    this.logger.debug('scoreBuilding - setting geocode data for house (%s) in street (%s)', houseNo, streetPid)
     sa1 = SA1map[meshBlock]
     lga = LGAmap[meshBlock]
     latitude = streetNos[streetPid][houseNo][1]
@@ -2434,11 +2472,14 @@ def accuracy2(this, thisSuburb, statePid):
 Set up accuracy 2 return values
     '''
 
+    this.logger.debug('accuracy2 - suburb (%s), state (%s)', thisSuburb, statePid)
+
     soundCode = jellyfish.soundex(thisSuburb)
     for src in ['G', 'GA', 'C', 'A']:            # Select best suburb
         if statePid in suburbs[soundCode][thisSuburb]:
             if src in suburbs[soundCode][thisSuburb][statePid]:
                 key = list(suburbs[soundCode][thisSuburb][statePid][src])[0]
+                this.logger.debug('accuracy2 - setting geocode data for source (%s), key (%s) from (%s)', src, key, suburbs[soundCode][thisSuburb][statePid][src])
                 this.result['SA1'] = suburbs[soundCode][thisSuburb][statePid][src][key][0]
                 this.result['LGA'] = suburbs[soundCode][thisSuburb][statePid][src][key][1]
                 this.result['latitude'] = suburbs[soundCode][thisSuburb][statePid][src][key][2]
@@ -2447,6 +2488,7 @@ Set up accuracy 2 return values
                     if src == 'C':
                         this.result['isCommunity'] = True
                     else:
+                        this.logger.debug('accuracy2 - setting postcode to (%s) for suburb (%s)', key, thisSuburb)
                         this.result['postcode'] = key
                     this.result['G-NAF ID'] = str(thisSuburb) + '~' + str(key)
                     this.result['score'] &= ~12
@@ -2494,6 +2536,8 @@ def Rules1and2(this):
 Business Rules 1 and 2
     '''
 
+    this.logger.debug('Rules1and2 - checking state (%s), postcode (%s)', this.validState, this.validPostcode)
+
     # Business Rule 1
     if region:      # Assume an Australian Address, even if not state and postcode, if an Australian suburb found
         if this.validState is None:
@@ -2501,18 +2545,23 @@ Business Rules 1 and 2
                 # Check if one of these suburbs is in a single state
                 for thisSuburb in this.validSuburbs:
                     soundCode = this.validSuburbs[thisSuburb]['SX'][0]
-                    this.logger.debug('Rules1and2 - checking suburb %s:%s:%s', thisSuburb, soundCode, suburbs[soundCode])
+                    this.logger.debug('Rules1and2 - region - checking suburb %s:%s:%s', thisSuburb, soundCode, suburbs[soundCode])
                     if len(suburbs[soundCode][thisSuburb]) == 1:
                         this.validState = list(suburbs[soundCode][thisSuburb])[0]
-                        this.logger.info('Rules1and2 - trying state (%s)', this.validState)
+                        this.logger.info('Rules1and2 - region - trying state (%s) from validSuburb (%s)', this.validState, thisSuburb)
                     else:
-                        this.logger.debug('Rules1and2 - suburbs named %s in multiple states', thisSuburb)
+                        this.logger.debug('Rules1and2 - region - suburbs named %s in multiple states', thisSuburb)
                         # If we have a postcode, check to see if the postcode is in a single state/territory
                         if (this.validPostcode is not None) and (this.validPostcode in postcodeLocalities):
                             thisState = None
                             oneState = True
                             for localityPid in postcodeLocalities[this.validPostcode]:
+                                done = set()
                                 for thisStatePid, thisSuburb, thisAlias in localities[localityPid]:
+                                    thisThing = thisStatePid + '~' + thisSuburb
+                                    if thisThing in done:
+                                        continue
+                                    done.add(thisThing)
                                     if thisState is None:
                                         thisState = thisStatePid
                                     elif thisState != thisStatePid:
@@ -2528,10 +2577,11 @@ Business Rules 1 and 2
                     thisSuburb = list(this.validSuburbs)[0]
                     soundCode = this.validSuburbs[thisSuburb]['SX'][0]
                     this.validState = list(suburbs[soundCode][thisSuburb])[0]
-                this.logger.info('Rules1and2 - trying state (%s)', this.validState)
+                    this.logger.info('Rules1and2 - region - trying state (%s) from first validSuburb (%s)', this.validState, thisSuburb)
             elif (this.validPostcode is not None) and (this.validPostcode in postcodes):
                 # Guess the first state that has this postcode
                 this.validState = list(postcodes[this.validPostcode]['states'])[0]
+                this.logger.info('Rules1and2 - region - trying state (%s) from first state in postcode (%s)', this.validState, this.validPostcode)
     if (this.validState is None) and (this.validPostcode is None):
         this.logger.debug('Rules1and2 - no valid state or postcode')
         this.result['messages'].append('no valid state or postcode')
@@ -2549,13 +2599,14 @@ Business Rules 1 and 2
         # Has a chance of passing V1, V2 or V3
         if this.validPostcode is not None:
             # Passed "Have postcode"
-            this.logger.debug('Rules1and2 - have valid postcode(%s)', this.validPostcode)
+            this.logger.debug('Rules1and2 - have valid postcode(%s) in states(%s)', this.validPostcode, postcodes[this.validPostcode]['states'])
             if this.validState is not None:
                 # Passed "Have state"
                 this.logger.debug('Rules1and2 - have valid state(%s)', states[this.validState][0])
-                if this.validState in postcodes[this.validPostcode]['states']:
+                if (this.validPostcode in postcodes) and (this.validState in postcodes[this.validPostcode]['states']):
                     # Passed "postcode/state comb'n defined"
                     this.logger.debug('Rules1and2 - postcode(%s) is in state(%s)', this.validPostcode, states[this.validState][0])
+                    # this.logger.debug('Rules1and2 - suburbInPostcode (%s) and suburbInState (%s)', this.suburbInPostcode, this.suburbInState)
                     if (len(this.suburbInPostcode) > 0) and (len(this.suburbInState) > 0):
                         # Passed V1 - but we need to check for multiple suburbs
                         # Caller could have provided one in 'suburb' and another as extraText after the streetName
@@ -2653,6 +2704,13 @@ Business Rules 1 and 2
                             thisSuburb = suburb
                             break
             if this.result['postcode'] == '':
+                this.logger.debug('Rules1and2 - passed V3 - suburb in state (bad postcode) - no single postcode for suburbs (%s)', this.suburbInState)
+                for suburb in this.suburbInState:
+                    this.logger.debug('Rules1and2 - passed V3 - suburb in state (bad postcode) - no single postcode for suburb (%s)', suburb)
+                    soundCode = jellyfish.soundex(suburb)
+                    if (soundCode not in suburbs) or (suburb not in suburbs[soundCode]):
+                        continue
+                    this.logger.debug('Rules1and2 - passed V3 - suburb in state (bad postcode) - no single postcode for suburb (%s) details(%s)', suburb, suburbs[soundCode][suburb])
                 this.validPostcode = None
             this.logger.debug('Rules1and2 - best suburb is (%s)', thisSuburb)
             if not accuracy2(this, thisSuburb, this.validState):
@@ -2690,6 +2748,7 @@ Business Rules 1 and 2
         this.logger.debug('Rules1and2 - passed V5')
         this.result['suburb'] = ''
         this.result['score'] &= ~240
+        this.logger.debug('Rules1and2 - setting geocode data for postcode (%s)', this.validPostcode)
         this.result['SA1'] = postcodes[this.validPostcode][''][0]
         this.result['LGA'] = postcodes[this.validPostcode][''][1]
         this.result['latitude'] = postcodes[this.validPostcode][''][2]
@@ -2927,8 +2986,12 @@ Check to see if any of the valid streets are in any of the valid suburbs
                                     this.allStreetSources[streetPid] = ''                # Adding a street that is not in validStreets
                                 this.allStreetSources[streetPid] += '~' + src
                             if (src == 'GN') and (localityPid in localities):
+                                done = set()
                                 for thisStatePid, thisSuburb, thisAlias in localities[localityPid]:
                                     neighbour = thisSuburb
+                                    if neighbour in done:
+                                        continue
+                                    done.add(neighbour)
                                     if neighbour not in this.neighbourhoodSuburbs:
                                         this.neighbourhoodSuburbs[neighbour] = set()
                                     this.neighbourhoodSuburbs[neighbour].add(suburb)
@@ -2954,8 +3017,12 @@ Check to see if any of the valid streets are in any of the valid suburbs
                                             this.allStreetSources[streetPid] = ''                # Adding a street that is not in validStreets
                                         this.allStreetSources[streetPid] += '~' + src
                                     if (src == 'GN') and (localityPid in localities):
+                                        done = set()
                                         for thisStatePid, thisSuburb, thisAlias in localities[localityPid]:
                                             neighbour = thisSuburb
+                                            if neighbour in done:
+                                                continue
+                                            done.add(neighbour)
                                             if neighbour not in this.neighbourhoodSuburbs:
                                                 this.neighbourhoodSuburbs[neighbour] = set()
                                             this.neighbourhoodSuburbs[neighbour].add(suburb)
@@ -3624,6 +3691,7 @@ And score this returned data
     else:
         this.result['score'] |= 4096
     meshBlock = streetNos[streetPid][this.houseNo][0]
+    this.logger.debug('returnHouse - setting geocode data for house (%s) in street (%s)', this.houseNo, streetPid)
     sa1 = SA1map[meshBlock]
     lga = LGAmap[meshBlock]
     latitude = streetNos[streetPid][this.houseNo][1]
@@ -3697,7 +3765,11 @@ And score this returned data
             scoreSuburb(this, suburb, statePid)
             this.result['score'] &= ~12
             if (postcode is None) and (this.validPostcode is not None):       # Check if an alias of suburb has this postcode
+                done = set()
                 for thisStatePid, thisSuburb, thisAlias in localities[locality]:
+                    if thisSuburb in done:
+                        continue
+                    done.add(thisSuburb)
                     if (this.validPostcode in postcodes) and (thisSuburb in postcodes[this.validPostcode]):
                         postcode = this.validPostcode
                         this.logger.debug('returnHouse - postcode [from postcodes] for locality(%s) is (%s)', locality, postcode)
@@ -3738,6 +3810,7 @@ And score the returned data
 
     streetKey, soundCode, streetInfo, bestSource = scoreStreet(this, streetPid)
     if (soundCode in streets) and (streetKey in streets[soundCode]) and (bestSource in streets[soundCode][streetKey]) and (streetPid in streets[soundCode][streetKey][bestSource]):
+        this.logger.debug('returnStreetPid - setting geocode data for streetKey (%s) bestSource (%s)', streetKey, bestSource)
         thisSA1, thisLGA, latitude, longitude = streets[soundCode][streetKey][bestSource][streetPid]
     else:
         this.logger.critical('returnStreetPid - configuration error - streets[soundCode:(%s)][streekKey:(%s)][bestSource:(%s) does not contain streetPid (%s)', soundCode, streetKey, bestSource, streetPid)
@@ -3817,7 +3890,11 @@ And score the returned data
                     this.logger.debug('returnStreetPid - adding suburb(%s) to validSuburbs', suburb)
                     # Check if this suburb is an alias of a suburb in this.validSuburbs
                     isAPI = False
+                    done = set()
                     for thisStatePid, thisSuburb, thisAlias in localities[locality]:
+                        if thisSuburb in done:
+                            continue
+                        done.add(thisSuburb)
                         if thisSuburb in this.validSuburbs:
                             isAPI = this.validSuburbs[thisSuburb]['SX'][1]
                     this.validSuburbs[suburb] = {}
@@ -4497,6 +4574,7 @@ The accuracy is
     if not streetFound:
         # We have no streets within suburbs but, if we have suburbs, we may be able to return suburb level geocode data
         if len(this.validSuburbs) > 0:            # We have suburbs
+            this.logger.debug('No street found, this.validState (%s), this.validPostcode (%s), this.bestSuburb(%s)', this.validState, this.validPostcode, this.bestSuburb)
             if (this.houseNo is not None) and (scoreBuilding(this, None, None)):            # See if we can do better with a building name that matches one of these suburbs, with a house that has this house number
                 this.logger.debug('building found')
                 return
@@ -4506,11 +4584,24 @@ The accuracy is
             if this.bestSuburb is not None:            # We have a best suburb, in the validState, in the validPostcode
                 thisSuburb = this.bestSuburb
             elif len(this.suburbInState) > 0:        # We have suburbs in the validState, but not in the validPostcode
-                thisSuburb = sorted(list(this.suburbInState))[0]
+                for suburb, isAPI in sorted(this.foundSuburbText):
+                    if suburb in this.suburbInState:
+                        thisSuburb = suburb
+                else:
+                    thisSuburb = sorted(list(this.suburbInState))[0]
             elif len(this.suburbInPostcode) > 0:    # We have suburbs in the validPostcode, but not in the validState
-                thisSuburb = sorted(list(this.suburbInPostcode))[0]
+                for suburb, isAPI in sorted(this.foundSuburbText):
+                    if suburb in this.suburbInPostcode:
+                        thisSuburb = suburb
+                else:
+                    thisSuburb = sorted(list(this.suburbInPostcode))[0]
             else:
-                thisSuburb = sorted(list(this.validSuburbs))[0]            # Pick the first one and try and work out the state and postcode
+                for suburb, isAPI in sorted(this.foundSuburbText):
+                    if suburb in this.validSuburbs:
+                        thisSuburb = suburb
+                else:
+                    thisSuburb = sorted(list(this.validSuburbs))[0]            # Pick the first one and try and work out the state and postcode
+            this.logger.debug('No street found - going with thisState (%s), thisPostcode (%s), thisSuburb(%s)', thisState, thisPostcode, thisSuburb)
             if thisPostcode is not None:            # We have a postcode in postcodes to work with
                 if (len(postcodes[thisPostcode]['states']) > 1) and (thisState is None):
                     # We have no state and the specified postcode crosses a state boundary - so state cannot be determined
@@ -4576,23 +4667,37 @@ The accuracy is
                 found = False
                 # Try and find a locality (in this postcode) for this suburb in this state
                 if (soundCode in suburbs) and (thisSuburb in suburbs[soundCode]) and (thisState in suburbs[soundCode][thisSuburb]):
-                    for src in ['G', 'GA', 'C', 'A', 'GS', 'AS', 'GL', 'AL', 'GN']:            # Select best geocode data
+                    this.logger.debug('Searching for geocode data for suburb (%s) in state (%s) with postcode (%s) from source (%s)', thisSuburb, thisState, thisPostcode, suburbs[soundCode][thisSuburb][thisState])
+                    for src in ['G', 'C', 'GA', 'A', 'GS', 'AS', 'GL', 'AL', 'GN']:            # Select best geocode data
                         if src in suburbs[soundCode][thisSuburb][thisState]:
-                            if src in ['A', 'AS', 'AL', 'C']:
-                                # Australia Post and community names
+                            if src in ['A', 'AS', 'AL']:
+                                # Australia Post codes
                                 if thisPostcode in suburbs[soundCode][thisSuburb][thisState][src]:
+                                    this.logger.debug('Setting geocode data for suburb (%s) in state (%s) with postcode (%s) from source (%s)', thisSuburb, thisState, thisPostcode, src)
                                     SA1, LGA, latitude, longitude = suburbs[soundCode][thisSuburb][thisState][src[:1]][thisPostcode]
                                     gnafId = str(thisSuburb) + '~' + str(thisPostcode)
+                                    found = True
                                     break
+                                else:
+                                    this.logger.debug('postcode (%s) not in suburb (%s), state (%s), source (%s)', thisPostcode, thisSuburb, thisState, src)
                             else:
-                                # For G-NAF we need a localityPid match between suburb and localityPostcodes
+                                # For G-NAF and community suburbs we need a localityPid match between suburb and localityPostcodes
                                 for localityPid in suburbs[soundCode][thisSuburb][thisState][src]:
                                     if localityPid in localityPostcodes:
                                         if thisPostcode in localityPostcodes[localityPid]:
+                                            this.logger.debug('Setting geocode data for suburb (%s) in state (%s) with postcode (%s) from source (%s)', thisSuburb, thisState, thisPostcode, src)
+                                            if src == 'C':
+                                                this.result['isCommunity'] = True
                                             SA1, LGA, latitude, longitude = suburbs[soundCode][thisSuburb][thisState][src][localityPid]
                                             gnafId = 'L-' + str(localityPid)
                                             found = True
                                             break
+                                        else:
+                                            this.logger.debug('postcode (%s) not in localityPostcodes for locality (%s), state (%s), source (%s)', thisPostcode, localityPid, thisState, src)
+                                    else:
+                                        this.logger.debug('localityPid (%s) not in localityPostcodes for suburb (%s), state (%s), source (%s)', localityPid, thisSuburb, thisState, src)
+                                if found:
+                                    break
                 if not found:
                     this.result['status'] = 'Address not found'
                     this.result['accuracy'] = '0'
@@ -4606,6 +4711,7 @@ The accuracy is
                 this.result['accuracy'] = '2'
                 return
             # We have no state or no postcode
+            this.logger.debug('No state or no postcode, result postcode (%s)', this.result['postcode'])
             this.result['suburb'] = thisSuburb
             this.result['score'] &= ~240
             if thisState is not None:

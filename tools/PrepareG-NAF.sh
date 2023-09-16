@@ -221,5 +221,5 @@ then
 	echo "community_SA1LGA.psv already created"
 else
 	echo "creating community_SA1LGA.psv"
-	python3 getCommunity.py -G "${GNAFdir}" -A "${ABSdir}"
+	python3 getCommunity.py -A "${ABSdir}"
 fi

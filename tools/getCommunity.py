@@ -7,7 +7,7 @@ A script to assign SA1 and LGA codes to every G-NAF community_pid
 
 
 SYNOPSIS
-$ python getCommunitySA1LGA.py [-G GNAFdir|--GNAFdir=GNAFdir] [-A ABSdir|--ABSdir=ABSdir] [CommunitySA1LGAoutputFile]
+$ python getCommunitySA1LGA.py [-A ABSdir|--ABSdir=ABSdir] [CommunitySA1LGAoutputFile]
                               [-v loggingLevel|--verbose=logingLevel]
                               [-L logDir|--logDir=logDir] [-l logfile|--logfile=logfile]
 
@@ -15,9 +15,6 @@ REQUIRED
 
 
 OPTIONS
--G GNAFdir|--GNAFdir=GNAFdir
-The directory containing the G-NAF psv files - default ../G-NAF
-
 -A ABSdir|--ABSdir=ABSdir
 The directory containing the ABS SA1 and LGA files
 
@@ -294,8 +291,6 @@ Finally find the Postal Areas, SA1 and LGA polygons that bound this point.
 
     # Define the command line options
     parser = argparse.ArgumentParser(prog=progName)
-    parser.add_argument('-G', '--GNAFdir', dest='GNAFdir', default='../G-NAF',
-                        help='The name of the directory containing the G-NAF psv files - default ../G-NAF')
     parser.add_argument('-A', '--ABSdir', dest='ABSdir', default='../ABS',
                         help='The name of the directory containing the ABS SA1 and LGA files - default ../ABS')
     parser.add_argument ('CommunitySA1LGAoutputFile', nargs='?', default='community_SA1LGA.psv',
@@ -307,7 +302,6 @@ Finally find the Postal Areas, SA1 and LGA polygons that bound this point.
 
     # Parse the command line options
     args = parser.parse_args()
-    GNAFdir = args.GNAFdir
     ABSdir = args.ABSdir
     CommunitySA1LGAoutputFile = args.CommunitySA1LGAoutputFile
     loggingLevel = args.verbose
@@ -362,22 +356,6 @@ Finally find the Postal Areas, SA1 and LGA polygons that bound this point.
     outRow = ['community_pid', 'community_name', 'state_pid', 'Postcode', 'SA1_MAINCODE_2016', 'LGA_CODE_2020', 'longitude', 'latitude']
     communitySA1LGAwriter.writerow(outRow)
 
-    # Next read in all the locality names
-    # LOCALITY_PID|DATE_CREATED|DATE_RETIRED|LOCALITY_NAME|PRIMARY_POSTCODE|LOCALITY_CLASS_CODE|STATE_PID|GNAF_LOCALITY_PID|GNAF_RELIABILITY_CODE
-    localityNames = {}
-    for SandT in ['ACT', 'NSW', 'NT', 'OT', 'QLD', 'SA', 'TAS', 'VIC', 'WA']:
-        localityfile = os.path.join(GNAFdir, 'Standard', SandT + '_LOCALITY_psv.psv')
-        with open(localityfile, 'rt', newline='', encoding='utf-8') as localityFile:
-            localityReader = csv.DictReader(localityFile, dialect=csv.excel, delimiter='|')
-            for row in localityReader:
-                if row['DATE_RETIRED'] != '':        # Skip if retired
-                    continue
-                locality_name = row['LOCALITY_NAME']
-                state_pid = row['STATE_PID']
-                if locality_name not in localityNames:
-                    localityNames[locality_name] = set()
-                localityNames[locality_name].add(state_pid)
-
     # Next read in all the Indigenous Communities
     ILOCshp = open(os.path.join(ABSdir, 'ILOC', 'ILOC_2021_AUST_GDA2020.shp'), 'rb')
     ILOCdbf = open(os.path.join(ABSdir, 'ILOC', 'ILOC_2021_AUST_GDA2020.dbf'), 'rb')
@@ -387,7 +365,8 @@ Finally find the Postal Areas, SA1 and LGA polygons that bound this point.
     ILOCfields = ILOCsf.fields
     ILOCrecords = ILOCsf.records()
 
-    coded = set()
+    # Collect the set of primary names (names with their own polygon)
+    primaryNames = set()
     for thisRecord, record in enumerate(ILOCrecords):
         community_pid = record.as_dict()['ILO_CODE21']
         name = record.as_dict()['ILO_NAME21'].upper()
@@ -413,6 +392,37 @@ Finally find the Postal Areas, SA1 and LGA polygons that bound this point.
             name = name[:-7]
         if name.endswith(' (TAS)'):
             name = name[:-6]
+        names = name.split(' - ')
+        if len(names) == 1:
+            primaryNames.add(name)
+
+    # Process all polygons
+    for thisRecord, record in enumerate(ILOCrecords):
+        community_pid = record.as_dict()['ILO_CODE21']
+        name = record.as_dict()['ILO_NAME21'].upper()
+        state_pid = record.as_dict()['STE_CODE21']
+        if name.startswith('MIGRATORY'):
+            continue
+        if name.startswith('OUTSIDE AUSTRALIA'):
+            continue
+        if name.startswith('NO USUAL'):
+            continue
+        excludes = name.find(' EXC.')
+        if excludes != -1:
+            name = name[:excludes].strip()
+        if name.endswith('CAMPS'):
+            name = name[:-1]
+        if name.endswith(' (QLD)'):
+            name = name[:-6]
+        if name.endswith(' (VIC.)'):
+            name = name[:-7]
+        if name.endswith(' (VIC)'):
+            name = name[:-6]
+        if name.endswith(' (TAS.)'):
+            name = name[:-7]
+        if name.endswith(' (TAS)'):
+            name = name[:-6]
+
         # Look for alternate names
         names = name.split(' - ')
         extraNames = []
@@ -425,88 +435,79 @@ Finally find the Postal Areas, SA1 and LGA polygons that bound this point.
         trim += ['COAST', 'NORTH COAST', 'NORTH-EAST COAST', 'EAST COAST', 'SOUTH-EAST COAST', 'SOUTH COAST', 'SOUTH-WEST COAST', 'WEST COAST', 'NORTH-WEST COAST']
         trim += ['SOUTHERN HINTERLANDS', 'NORTHERN BEACHES', 'SOUTHERN RANGELANDS', 'OUTSTATIONS', 'VILLAGE CAMP']
         trim += ['SURROUNDS']
+
+        # Check if a name was "name" - trim
+        # and got split. If so rejoin and add two alternates
         for i in range(len(names) - 1, -1, -1):
             if i > 0:
+                thisName = names[i].strip()
+                # If the next name is trouble, then just add it to the previous name
                 try:
-                    trouble = trim.index(names[i])
+                    trouble = trim.index(thisName)
                 except ValueError as e:
                     trouble = None
                 if trouble is not None:
-                    names[i - 1] += ' - ' + trim[trouble]
+                    names[i - 1] = names[i - 1].strip()
+                    extraNames.append(names[i - 1] + ' (' + thisName + ')')
+                    extraNames.append(names[i - 1] + ' ' + thisName)
+                    names[i - 1] += ' - ' + thisName
                     del names[i]
 
+        # Check if name has an alternate name or trim in ()
         for i, thisName in enumerate(names):
             names[i] = thisName.strip()
+            # Check for an alternates at the end
             if names[i].endswith(')'):
                 altStart = names[i].find('(')       # An alternate name in ()
                 if altStart != -1:
-                    altName = names[i][altStart + 1:-1].strip()
+                    alt1 = names[i][:altStart].strip()
+                    alt2 = names[i][altStart + 1:-1].strip()
                     # Could be trim in brackets
                     try:
-                        trouble = trim.index(altName)
+                        trouble = trim.index(alt2)
                     except ValueError as e:
                         trouble = None
-                    if trouble is not None:
-                        extraNames.append(altName)
-                        names[i] = names[i][:altStart].strip()
+                    if trouble is not None:     # trim in brackets
+                        extraNames.append(alt1 + ' - ' + alt2)
+                        extraNames.append(alt1 + ' ' + alt2)
+                    else:
+                        names[i] = alt1
+                        alt2 = alt2.replace('HOMELANDS', 'HOMELAND')
+                        alt2 = alt2.replace('ISLANDS', 'ISLAND')
+                        extraNames.append(alt2)
             else:       # Look for an alternate name in the middle
-                thisName = names[i]
-                hasTrim = thisName.find(' - ')
-                if hasTrim != -1:
-                    thisTrim = names[i][hasTrim + 3:]
-                    thisName = thisName[:hasTrim]
-                    extraNames.append(thisName + ' (' + thisTrim + ')')
-                    extraNames.append(thisName + ' ' + thisTrim)
-                else:
-                    thisTrim = None
-                altStart = thisName.find('(')
-                altEnd = thisName.find(')')
+                altStart = names[i].find('(')
+                altEnd = names[i].find(')')
                 if (altStart != -1) and (altEnd != -1) and (altStart < altEnd):
-                    alt1 = thisName[:altStart].strip() + ' ' + thisName[altEnd + 1:].strip()
-                    alt2 = thisName[altStart + 1:altEnd].strip() + ' ' + thisName[altEnd + 1:].strip()
-                    alt1 = alt1.replace('HOMELANDS', 'HOMELAND')
-                    alt2 = alt2.replace('HOMELANDS', 'HOMELAND')
-                    alt1 = alt1.replace('ISLANDS', 'ISLAND')
-                    alt2 = alt2.replace('ISLANDS', 'ISLAND')
-                    extraNames.append(alt1)
-                    extraNames.append(alt2)
-                    if thisTrim is not None:
-                        extraNames.append(alt1 + ' - ' + thisTrim)
-                        extraNames.append(alt2 + ' - ' + thisTrim)
-                        extraNames.append(alt1 + ' (' + thisTrim + ')')
-                        extraNames.append(alt2 + ' (' + thisTrim + ')')
-                        extraNames.append(alt1 + ' ' + thisTrim)
-                        extraNames.append(alt2 + ' ' + thisTrim)
-        todoNames = []
-        for thisName in names + extraNames:
-            if (thisName in localityNames) and (state_pid in localityNames[thisName]):
+                    alt1 = names[i][:altStart].strip()
+                    alt2 = names[i][altStart + 1:altEnd].strip()
+                    alt3 = names[i][altEnd + 1:].strip()
+                    # Could be trim in brackets
+                    try:
+                        trouble = trim.index(alt2)
+                    except ValueError as e:
+                        trouble = None
+                    if trouble is not None:     # trim in brackets
+                        extraNames.append(alt1 + ' - ' + alt2 + ' ' + alt3)
+                        extraNames.append(alt1 + ' (' + alt2 + ') ' + alt3)
+                    else:
+                        alt3 = alt3.replace('HOMELANDS', 'HOMELAND')
+                        alt3 = alt3.replace('ISLANDS', 'ISLAND')
+                        extraNames.append(alt1 + ' ' + alt3)
+                        extraNames.append(alt2 + ' ' + alt3)
+
+        todoNames = names
+        for thisName in extraNames:
+            if thisName in primaryNames:
                 continue
             todoNames.append(thisName)
 
         if len(todoNames) > 0:
 
             # Find this location and related data
-            minLatitude = maxLatitude = minLongitude = maxLongitude = None
-            for shape in ILOCshapes:
-                shape = ILOCshapes[thisRecord]
-                if shape.shapeType == 5:        # Must be a polygon
-                    parts = shape.parts
-                    for part in parts:
-                        points = list(shape.points[part])        # each point
-                        thisLong = points[0]
-                        thisLat = points[1]
-                        if minLatitude is None:
-                            minLatitude = thisLat
-                            maxLatitude = thisLat
-                            minLongitude = thisLong
-                            maxLongitude = thisLong
-                        else:
-                            minLatitude = min(minLatitude, thisLat)
-                            maxLatitude = max(maxLatitude, thisLat)
-                            minLongitude = min(minLongitude, thisLong)
-                            maxLongitude = max(maxLongitude, thisLong)
-            longitude = (maxLongitude + minLongitude) / 2
-            latitude = (maxLatitude + minLatitude) / 2
+            shape = ILOCshapes[thisRecord]
+            longitude = (shape.bbox[0] + shape.bbox[2]) / 2.0
+            latitude = (shape.bbox[1] + shape.bbox[3]) / 2.0
 
 
             # Find the polygons that contains this point
@@ -536,13 +537,11 @@ Finally find the Postal Areas, SA1 and LGA polygons that bound this point.
                                 community_pid, latitude, longitude)
 
             for thisName in todoNames:
-                if thisName in coded:
-                    continue
                 if (POA is not None) or (SA1 is not None) or (LGA is not None):
                     logging.info('Found community_pid(%s:%s:%s)[%s,%s], POA(%s), SA1(%s), LGA(%s)', community_pid, state_pid, name, longitude, latitude, POA, SA1, LGA)
                     outRow = ['ILOC-' + community_pid, thisName, state_pid, POA, SA1, LGA, longitude, latitude]
                     communitySA1LGAwriter.writerow(outRow)
-                coded.add(thisName)
+                # coded.add(thisName)
 
     communitySA1LGAfile.close()
 
