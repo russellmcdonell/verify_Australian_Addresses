@@ -329,7 +329,16 @@ This script finds the SA1 and LGA polygons that bound this point.
         else:
             logging.basicConfig(format=logfmt, datefmt='%d/%m/%y %H:%M:%S %p')
 
-    # Start by reading in the POLYGONS for each SA1 area
+    # Start by reading in the POLYGONS for each POA area
+    POAshp = open(os.path.join(ABSdir, 'PostalAreas', 'POA_2021_AUST_GDA2020.shp'), 'rb')
+    POAdbf = open(os.path.join(ABSdir, 'PostalAreas', 'POA_2021_AUST_GDA2020.dbf'), 'rb')
+    POAshx = open(os.path.join(ABSdir, 'PostalAreas', 'POA_2021_AUST_GDA2020.shx'), 'rb')
+    POAsf = shapefile.Reader(shp=POAshp, dbf=POAdbf, shx=POAshx)
+    POAshapes = POAsf.shapes()
+    POAfields = POAsf.fields
+    POArecords = POAsf.records()
+
+    # Then read in the POLYGONS for each SA1 area
     SA1shp = open(os.path.join(ABSdir, 'SA1', 'SA1_2016_AUST.shp'), 'rb')
     SA1dbf = open(os.path.join(ABSdir, 'SA1', 'SA1_2016_AUST.dbf'), 'rb')
     SA1shx = open(os.path.join(ABSdir, 'SA1', 'SA1_2016_AUST.shx'), 'rb')
@@ -350,7 +359,7 @@ This script finds the SA1 and LGA polygons that bound this point.
     # Open the output file
     localitySA1LGAfile =  open(LocalitySA1LGAoutputFile, 'wt', newline='', encoding='utf-8')
     localitySA1LGAwriter = csv.writer(localitySA1LGAfile, dialect=csv.excel, delimiter='|')
-    outRow = ['locality_pid', 'SA1_MAINCODE_2016', 'LGA_CODE_2020', 'longitude', 'latitude']
+    outRow = ['locality_pid', 'Postcode', 'SA1_MAINCODE_2016', 'LGA_CODE_2020', 'longitude', 'latitude']
     localitySA1LGAwriter.writerow(outRow)
 
     # Next read in all the locality GPS details
@@ -378,6 +387,11 @@ This script finds the SA1 and LGA polygons that bound this point.
                     continue
 
                 # Find the polygons that contains this point
+                POA = findPolygon(POAshapes, POArecords, locality_pid, longitude, latitude)
+                if POA is None:
+                    logging.warning('locality_pid(%s)[%.7f,%.7f] is not inside any POA polygon - looking for nearest polygon',
+                                    locality_pid, latitude, longitude)
+                    POA = findNearestPolygon(POAshapes, POArecords, longitude, latitude)
                 SA1 = findPolygon(SA1shapes, SA1records, locality_pid, longitude, latitude)
                 if SA1 is None:
                     logging.warning('locality_pid(%s)[%.7f,%.7f] is not inside any SA1 polygon - looking for nearest polygon',
@@ -394,9 +408,9 @@ This script finds the SA1 and LGA polygons that bound this point.
                 if LGA is None:
                     logging.warning('locality_pid(%s)[%s,%s] is not inside any LGA polygon bounding box',
                                     locality_pid, latCode, longCode)
-                if (SA1 is not None) or (LGA is not None):
+                if (POA is not None) or (SA1 is not None) or (LGA is not None):
                     logging.debug('Found locality_pid(%s)[%s,%s], SA1(%s), LGA(%s)', locality_pid, longCode, latCode, SA1, LGA)
-                    outRow = [locality_pid, SA1, LGA, longitude, latitude]
+                    outRow = [locality_pid, POA, SA1, LGA, longitude, latitude]
                     localitySA1LGAwriter.writerow(outRow)
 
     localitySA1LGAfile.close()
