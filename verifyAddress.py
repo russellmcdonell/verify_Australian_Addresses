@@ -1000,9 +1000,9 @@ def initData(this):
                             abbrev = rrow['abbrev']
                             abbrev = abbrev.replace('.', r'\.')
                             if abbrev[-1] == '.':
-                                states[statePid].append(re.compile(r'\b' + rrow['abbrev'].replace(' ', r'\s+')))
+                                states[statePid].append(re.compile(r'\b' + abbrev.replace(' ', r'\s+')))
                             else:
-                                states[statePid].append(re.compile(r'\b' + rrow['abbrev'].replace(' ', r'\s+') + r'\b'))
+                                states[statePid].append(re.compile(r'\b' + abbrev.replace(' ', r'\s+') + r'\b'))
     this.logger.info('%d states fetched', len(states))
 
     this.logger.info('Fetching street types and street suffixes')
@@ -2634,7 +2634,8 @@ Business Rules 1 and 2
     if len(this.validSuburbs) > 0:
         this.logger.debug('Rules1and2 - have valid suburb(s):%s', this.validSuburbs)
         bestSuburb(this)        # Compute the best suburbs
-        this.logger.debug('Rules1and2 - have valid suburbs(%s) in postcode(%s) and suburbs(%s) in states(%s)', this.suburbInPostcode, this.validPostcode, this.suburbInState, postcodes[this.validPostcode]['states'])
+        if this.validPostcode is not None:
+            this.logger.debug('Rules1and2 - have valid suburbs(%s) in postcode(%s) and suburbs(%s) in states(%s)', this.suburbInPostcode, this.validPostcode, this.suburbInState, postcodes[this.validPostcode]['states'])
         # Has a chance of passing V1, V2 or V3
         if this.validPostcode is not None:
             # Passed "Have postcode"
@@ -4183,6 +4184,7 @@ The accuracy is
                         found = True
                 if (this.validState is None) and not found:    # Check if we need a state and this is a candidate
                     for state, stateInfo in states.items():                        # Check if this is a state or abbrevated state
+                        # this.logger.debug('Checking part (%s) for state(%s) with sateInfo (%s)', thisPart, state, stateInfo)
                         for pattern in stateInfo[1:]:
                             match = pattern.match(thisPart)
                             if (match is not None) and (match.start() == 0) and (match.end() == len(thisPart)):
@@ -4367,7 +4369,10 @@ The accuracy is
 
 
         if (streetTypeAt is None) or (this.streetType in shortTypes):    # No streetType in address or ambiguous street type in address
-            this.logger.debug('No street type found or ambiguous street type found - scanning for streets with no street type')
+            if streetTypeAt is None:
+                this.logger.debug('No street type found street type found - scanning for streets with no street type')
+            else:
+                this.logger.debug('Ambiguous street type found - scanning for streets with no street type')
             '''
             Scan for street with no street type
             '''
