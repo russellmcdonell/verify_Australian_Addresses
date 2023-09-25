@@ -120,7 +120,7 @@ if test -f "postcode_SA1LGA.psv"
 then
 	echo "postcode_SA1LGA.psv already created"
 else
-	python3 getPostcodeSA1LGA.py -G "${GNAFdir}"
+	python3 getPostcodeSA1LGA.py -A "${ABSdir}"
 fi
 
 # Create the file sa1.psv file

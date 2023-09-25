@@ -163,7 +163,10 @@ def findPolygon(shapes, records, thisPostcode, thisLocality, long, lat):
     Find a polygon that contains this longitude and latitude
     '''
     # Find a polygon that contains this point
+    # Every point is "inside" only one polygon, but a polygon can be inside another polygon (donut effect)
     # Each shape has a bounding box and a number of parts
+    foundII = None
+    foundShape = None
     for ii, shape in enumerate(shapes):
         # Only check polygons
         if shape.shapeType != 5:        # Not a polygon
@@ -178,6 +181,9 @@ def findPolygon(shapes, records, thisPostcode, thisLocality, long, lat):
             continue
         if lat > shape.bbox[3]:    # This point is more northerly than the polygon
             continue
+        if foundII is not None:     # Check if this polygon surrounds the found polygon
+            if (foundShape.bbox[0] > shape.bbox[0]) and (foundShape.bbox[2] < shape.bbox[2]):
+                continue
         logging.debug('Checking:%s', records[ii][0])
         # There may be multiple "rings" in this polygon
         # Basically sub-sets of point, which make up each set
@@ -198,7 +204,9 @@ def findPolygon(shapes, records, thisPostcode, thisLocality, long, lat):
             if (long == p2Long) and (lat == p2Lat):
                 logging.debug('Point for thisPostcode(%s), thisLocality(%s)[%.7f,%.7f] is the start of the first line segment',
                              thisPostcode, thisLocality, long, lat)
-                return records[ii][0]
+                foundII = ii
+                foundShape = shape
+                break
             crossings = []
             # Check each line segment (from point[jj] to point[jj + 1])
             logging.debug('Checking from %d to %d', parts[part], parts[part + 1] - 1)
@@ -214,7 +222,9 @@ def findPolygon(shapes, records, thisPostcode, thisLocality, long, lat):
                 if (long == p2Long) and (lat == p2Lat):
                     logging.debug('Point for thisPostcode(%s), thisLocality(%s)[%.7f,%.7f] is the end of a line segment',
                                  thisPostcode, thisLocality, long, lat)
-                    return records[ii][0]
+                    foundII = ii
+                    foundShape = shape
+                    break
 
                 # Don't count lines that will touch the end point - that would create double counting
                 if p2Lat == lat:        # Don't count lines that will touch the end point - that would create double counting
@@ -249,28 +259,36 @@ def findPolygon(shapes, records, thisPostcode, thisLocality, long, lat):
                 logging.debug('%s', repr(inflection))
                 (crosses, isEdge) = checkCrossing(lat, long, p1Lat, p1Long, p2Lat, p2Long, inflection)
                 if isEdge:            # On the line is in
-                    return records[ii][0]
+                    foundII = ii
+                    foundShape = shape
+                    break
                 if crosses:             # Crosses or is on the edge
                     count += 1          # Count the crossings
                     crossings.append([p1Long, p1Lat, p2Long, p2Lat])
 
-            logging.debug('line from thisPostcode(%s), thisLocality(%s)[%.7f,%.7f] to the East crossed (%s) polygon line segments for %s',
-                         thisPostcode, thisLocality, long, lat, count, records[ii][0])
-            # If the imaginary line going East from this point intersects an even number of polygon line segments
-            # then the point is outside the polygon.
-            # Points inside the polygon must intersect an odd number of line segments
-            if (count % 2) == 1:        # The point is inside this polygon
-                return records[ii][0]
-            else:                       # The point is inside the polygon bounding box, outside the polygon
-                logging.debug('thisPostcode(%s), thisLocality(%s) is inside bounding box(%s)',
-                             thisPostcode, thisLocality, repr(shape.bbox))
-                logging.debug('but thisPostcode(%s), thisLocality(%s) crosses polygon (%s) times', thisPostcode, thisLocality, count)
-                logging.debug('polygon(%s)', repr(shape.points[parts[part]:parts[part + 1]]))
-                for jj, cross in enumerate(crossings):
-                    logging.debug('crossings[%s]', repr(cross))
+            else:
+                logging.debug('line from thisPostcode(%s), thisLocality(%s)[%.7f,%.7f] to the East crossed (%s) polygon line segments for %s',
+                             thisPostcode, thisLocality, long, lat, count, records[ii][0])
+                # If the imaginary line going East from this point intersects an even number of polygon line segments
+                # then the point is outside the polygon.
+                # Points inside the polygon must intersect an odd number of line segments
+                if (count % 2) == 1:        # The point is inside this polygon
+                    foundII = ii
+                    foundShape = shape
+                    break
+                else:                       # The point is inside the polygon bounding box, outside the polygon
+                    logging.debug('thisPostcode(%s), thisLocality(%s) is inside bounding box(%s)',
+                                 thisPostcode, thisLocality, repr(shape.bbox))
+                    logging.debug('but thisPostcode(%s), thisLocality(%s) crosses polygon (%s) times', thisPostcode, thisLocality, count)
+                    logging.debug('polygon(%s)', repr(shape.points[parts[part]:parts[part + 1]]))
+                    for jj, cross in enumerate(crossings):
+                        logging.debug('crossings[%s]', repr(cross))
 
-    # The point is not inside any of the polygon bounding boxes
-    return None
+    if foundII is not None:
+        return records[foundII][0]
+    else:
+        # The point is not inside any of the polygon bounding boxes
+        return None
 
 
 multiSpace = re.compile(r'\s\s+')     # Collapse mutiple white space to a single space
@@ -418,10 +436,19 @@ extraPostcodeSA1LGA.psv and extraLocality.psv from getConfig.json
                     streetSuffixWriter.writerow([streetSuffix, abbrev])
 
 
-    if ('POSTCODE_SA1' in config) or ('LOCALITY_POSTCODE' in config):
+    if ('POSTCODES' in config) or ('LOCALITY_POSTCODE' in config):
         # We may have new data to enhance postcode_SA1LGA.psv and/or locality_SA1LGA.psv and/or locality.psv
 
-        # Start by reading in the POLYGONS for each LGA areas
+        # Start by reading in the POLYGONS for each SA1 area
+        SA1shp = open(os.path.join(ABSdir, 'SA1', 'SA1_2016_AUST.shp'), 'rb')
+        SA1dbf = open(os.path.join(ABSdir, 'SA1', 'SA1_2016_AUST.dbf'), 'rb')
+        SA1shx = open(os.path.join(ABSdir, 'SA1', 'SA1_2016_AUST.shx'), 'rb')
+        SA1sf = shapefile.Reader(shp=SA1shp, dbf=SA1dbf, shx=SA1shx)
+        SA1shapes = SA1sf.shapes()
+        SA1fields = SA1sf.fields
+        SA1records = SA1sf.records()
+
+        # Then read in the POLYGONS for each LGA area
         LGAshp = open(os.path.join(ABSdir, 'LGA', 'LGA_2020_AUST.shp'), 'rb')
         LGAdbf = open(os.path.join(ABSdir, 'LGA', 'LGA_2020_AUST.dbf'), 'rb')
         LGAshx = open(os.path.join(ABSdir, 'LGA', 'LGA_2020_AUST.shx'), 'rb')
@@ -475,23 +502,16 @@ extraPostcodeSA1LGA.psv and extraLocality.psv from getConfig.json
 
     extraLocalities = []                # LOCALITY_PID|LOCALITY_NAME|PRIMARY_POSTCODE|STATE_PID|ALIAS
     extraPostcodeSA1LGA = []            # state_name|postcode|locality_name|SA1_MAINCODE_2016|LGA_CODE_2020|longitude|latitude
-    if 'POSTCODE_SA1' in config:
-        for name in config['POSTCODE_SA1']:
+    if 'POSTCODES' in config:
+        for name in config['POSTCODES']:
             if name == '/* comment */':
                 continue
-            if 'locality' not in config['POSTCODE_SA1'][name]:
+            if 'locality' not in config['POSTCODES'][name]:
                 continue
-            suburb = config['POSTCODE_SA1'][name]['locality']
-            if 'SA1' not in config['POSTCODE_SA1'][name]:
-                continue
-            SA1 = str(config['POSTCODE_SA1'][name]['SA1'])
+            suburb = config['POSTCODES'][name]['locality']
             postcode = name
-            if postcode in postcodeSA1LGA:
-                if SA1 in postcode[postcode]:
-                    if suburb in postcode[postcode][SA1]:
-                        continue            # We have this data
-            longCode = config['POSTCODE_SA1'][postcode]['longitude']
-            latCode = config['POSTCODE_SA1'][postcode]['latitude']
+            longCode = config['POSTCODES'][postcode]['longitude']
+            latCode = config['POSTCODES'][postcode]['latitude']
             if longCode == '':
                 continue
             if latCode == '':
@@ -508,6 +528,15 @@ extraPostcodeSA1LGA.psv and extraLocality.psv from getConfig.json
                 continue
             if latitude == 0:
                 continue
+            SA1 = findPolygon(SA1shapes, SA1records, postcode, locality, longitude, latitude)
+            if SA1 is None:
+                SA1 = findNearestPolygon(SA1shapes, SA1records, longitude, latitude)
+            if SA1 is None:
+                continue
+            if postcode in postcodeSA1LGA:
+                if SA1 in postcode[postcode]:
+                    if suburb in postcode[postcode][SA1]:
+                        continue            # We have this data
             LGA = findPolygon(LGAshapes, LGArecords, postcode, locality, longitude, latitude)
             if LGA is None:
                 LGA = findNearestPolygon(LGAshapes, LGArecords, longitude, latitude)

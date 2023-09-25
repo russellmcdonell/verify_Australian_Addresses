@@ -69,6 +69,7 @@
         "OVERPASS": ["OP"],
         "OUTER": ["OT"],
 		"PARKWAY": ["PKWY"],
+		"PLACE": ["PLAC"],
         "SOUTH": ["S"],
         "SOUTH EAST": ["SE"],
         "SOUTH WEST": ["SW"],
@@ -81,32 +82,29 @@
             "key = Street Suffix (in full), value = list of additional abbreviation"
 		]
 	},
-	"POSTCODE_SA1": {
+	"POSTCODES": {
 		"/* comment */": [
-			"Any additional Postodes, with their SA1, longiude and latitude"
+			"Any additional Postodes and localities with their longiude and latitude"
 		],
 		"4471": {
 			"locality": "CLAVERTON",
-			"SA1": 31503141112,
 			"longitude": 145.958476,
 			"latitude": -27.370938
 		},
 		"4475": {
 			"locality": "CHEEPIE",
-			"SA1": 31503141104,
 			"longitude": 145.015267,
 			"latitude": -26.630456
 		},
 		"6711": {
 			"locality": "THEVENARD ISLAND",
-			"SA1": 51003127105,
 			"longitude": 115.020093,
 			"latitude": -21.459077
 		}
 	},
 	"LOCALITY_POSTCODE": {
 		"/* comment */": [
-			"Localities with any additional Postode"
+			"Localities with any additional/alternate Postode(s)"
 		],
 		"ACT107": [ { "postcode": "0200"} ],
 		"ACT108": [ { "postcode": "2608"} ],

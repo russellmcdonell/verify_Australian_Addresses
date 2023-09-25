@@ -8,6 +8,7 @@ data/*.csv
 data/*.psv
 tools/*.csv
 tools/*.psv
+tools/*fast.py
 backup/*
 testoutput/*
 testlogs/*

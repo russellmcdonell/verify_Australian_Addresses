@@ -165,7 +165,10 @@ def findPolygon(shapes, records, st_pid, long, lat):
     Find a polygon that contains this long and lat
     '''
     # Find a polygon that contains this point
+    # Every point is "inside" only one polygon, but a polygon can be inside another polygon (donut effect)
     # Each shape has a bounding box and a number of parts
+    foundI = None
+    foundShape = None
     for i, shape in enumerate(shapes):
         # Only check polygons
         if shape.shapeType != 5:        # Not a polygon
@@ -180,6 +183,9 @@ def findPolygon(shapes, records, st_pid, long, lat):
             continue
         if lat > shape.bbox[3]:    # This point is more northerly than the polygon
             continue
+        if foundI is not None:     # Check if this polygon surrounds the found polygon
+            if (foundShape.bbox[0] > shape.bbox[0]) and (foundShape.bbox[2] < shape.bbox[2]):
+                continue
         logging.debug('Checking:%s', records[i][0])
         # There may be multiple "rings" in this polygon
         # Basically sub-sets of point, which make up each set
@@ -200,7 +206,9 @@ def findPolygon(shapes, records, st_pid, long, lat):
             if (long == p2Long) and (lat == p2Lat):
                 logging.debug('Point for st_pid(%s)[%.7f,%.7f] is the start of the first line segment',
                              st_pid, long, lat)
-                return records[i][0]
+                foundI = i
+                foundShape = shape
+                break
             crossings = []
             # Check each line segment (from point[j] to point[j + 1])
             logging.debug('Checking from %d to %d', parts[part], parts[part + 1] - 1)
@@ -216,7 +224,9 @@ def findPolygon(shapes, records, st_pid, long, lat):
                 if (long == p2Long) and (lat == p2Lat):
                     logging.debug('Point for st_pid(%s)[%.7f,%.7f] is the end of a line segment',
                                  st_pid, long, lat)
-                    return records[i][0]
+                    foundI = i
+                    foundShape = shape
+                    break
 
                 # Don't count lines that will touch the end point - that would create double counting
                 if p2Lat == lat:        # Don't count lines that will touch the end point - that would create double counting
@@ -251,28 +261,36 @@ def findPolygon(shapes, records, st_pid, long, lat):
                 logging.debug('%s', repr(inflection))
                 (crosses, isEdge) = checkCrossing(lat, long, p1Lat, p1Long, p2Lat, p2Long, inflection)
                 if isEdge:            # On the line is in
-                    return records[i][0]
+                    foundI = i
+                    foundShape = shape
+                    break
                 if crosses:             # Crosses or is on the edge
                     count += 1          # Count the crossings
                     crossings.append([p1Long, p1Lat, p2Long, p2Lat])
 
-            logging.debug('line from st_pid(%s)[%.7f,%.7f] to the East crossed (%s) polygon line segments for %s',
-                         st_pid, long, lat, count, records[i][0])
-            # If the imaginary line going East from this point intersects an even number of polygon line segments
-            # then the point is outside the polygon.
-            # Points inside the polygon must intersect an odd number of line segments
-            if (count % 2) == 1:        # The point is inside this polygon
-                return records[i][0]
-            else:                       # The point is inside the polygon bounding box, outside the polygon
-                logging.debug('st_pid(%s) is inside bounding box(%s)',
-                             st_pid, repr(shape.bbox))
-                logging.debug('but st_pid(%s) crosses polygon (%s) times', st_pid, count)
-                logging.debug('polygon(%s)', repr(shape.points[parts[part]:parts[part + 1]]))
-                for j, cross in enumerate(crossings):
-                    logging.debug('crossings[%s]', repr(cross))
+            else:
+                logging.debug('line from st_pid(%s)[%.7f,%.7f] to the East crossed (%s) polygon line segments for %s',
+                             st_pid, long, lat, count, records[i][0])
+                # If the imaginary line going East from this point intersects an even number of polygon line segments
+                # then the point is outside the polygon.
+                # Points inside the polygon must intersect an odd number of line segments
+                if (count % 2) == 1:        # The point is inside this polygon
+                    foundI = i
+                    foundShape = shape
+                    break
+                else:                       # The point is inside the polygon bounding box, outside the polygon
+                    logging.debug('st_pid(%s) is inside bounding box(%s)',
+                                 st_pid, repr(shape.bbox))
+                    logging.debug('but st_pid(%s) crosses polygon (%s) times', st_pid, count)
+                    logging.debug('polygon(%s)', repr(shape.points[parts[part]:parts[part + 1]]))
+                    for j, cross in enumerate(crossings):
+                        logging.debug('crossings[%s]', repr(cross))
 
-    # The point is not inside any of the polygon bounding boxes
-    return None
+    if foundI is not None:
+        return records[foundI][0]
+    else:
+        # The point is not inside any of the polygon bounding boxes
+        return None
 
 
 

@@ -2538,6 +2538,7 @@ Set up accuracy 2 return values
                                 this.result['score'] |= 4
                                 this.result['postcode'] = list(localityPostcodes[key])[0]
                         else:
+                            this.logger.debug('Clearing result[postcode] because key (%s) not in localityPostcodes', key)
                             this.result['postcode'] = ''
                 this.result['status'] = 'Suburb found'
                 this.result['accuracy'] = '2'
@@ -2612,10 +2613,35 @@ Business Rules 1 and 2
                         this.validState = list(foundStates)[0]
                         this.logger.info('Rules1and2 - region - trying state (%s) as there is a suburb and postcode in this state', this.validState)
                     else:
-                        thisSuburb = list(this.validSuburbs)[0]
-                        soundCode = this.validSuburbs[thisSuburb]['SX'][0]
-                        this.validState = list(suburbs[soundCode][thisSuburb])[0]
-                        this.logger.info('Rules1and2 - region - trying state (%s) from first validSuburb (%s)', this.validState, thisSuburb)
+                        # Look for the best suburb
+                        thisBestState = None
+                        thisBestSuburb = None
+                        thisBestSource = None
+                        for thisSuburb in this.validSuburbs:
+                            soundCode = this.validSuburbs[thisSuburb]['SX'][0]
+                            for statePid, srcs in suburbs[soundCode][thisSuburb].items():
+                                if 'G' in srcs:
+                                    thisBestState = statePid
+                                    thisBestSuburb = thisSuburb
+                                    thisBestSource = 'G'
+                                elif ('GA' in srcs) and ((thisBestSource is None) or (thisBestSource != 'G')):
+                                    thisBestState = statePid
+                                    thisBestSuburb = thisSuburb
+                                    thisBestSource = 'GA'
+                                elif ('C' in srcs) and ((thisBestSource is None) or (thisBestSource not in ['G', 'GA'])):
+                                    thisBestState = statePid
+                                    thisBestSuburb = thisSuburb
+                                    thisBestSource = 'GA'
+                                elif ('GN' in srcs) and ((thisBestSource is None) or (thisBestSource not in ['G', 'GA', 'C'])):
+                                    thisBestState = statePid
+                                    thisBestSuburb = thisSuburb
+                                    thisBestSource = 'GN'
+                                else:
+                                    thisBestState = statePid
+                                    thisBestSuburb = thisSuburb
+                                    thisBestSource = list(srcs)[0]
+                        this.validState = thisBestState
+                        this.logger.info('Rules1and2 - region - trying state (%s) from best validSuburb (%s)', this.validState, thisBestSuburb)
             elif (this.validPostcode is not None) and (this.validPostcode in postcodes):
                 # Guess the first state that has this postcode
                 this.validState = list(postcodes[this.validPostcode]['states'])[0]
@@ -3923,7 +3949,8 @@ And score the returned data
                     postcode = list(sorted(localityPostcodes[locality]))[0]
                     this.logger.critical('returnStreetPid - locality postcode (%s)', postcode)
                 else:
-                    postCode = this.validPostcode
+                    postcode = this.validPostcode
+                    this.logger.critical('returnStreetPid - valid postcode (%s)', postcode)
             # Pick primary locality from localities[localityPid]
             this.logger.critical('returnStreetPid - choosing statePid (and suburb if None) from (%s)', localities[locality])
             suburb = None
