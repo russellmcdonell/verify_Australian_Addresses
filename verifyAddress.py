@@ -2255,26 +2255,17 @@ Score this suburb
         if thisScore == 16:            # thisSuburb must be alias, sounds like, looks like, primary name for an alias or neighbouring suburb
             this.logger.debug('scoreSuburb - suburb(%s) not passed as data', thisSuburb)
             if (thisSuburb not in this.validSuburbs) or (statePid not in this.validSuburbs[thisSuburb]):
-                # Must be a neighbouring suburb - possibly in a different state - find the passed suburb
-                this.logger.debug('scoreSuburb - suburb(%s) must be a neighbouring suburb', thisSuburb)
+                # Could be a neighbouring suburb - possibly in a different state - find the passed suburb
+                this.logger.debug('scoreSuburb - suburb(%s) could be a neighbouring suburb', thisSuburb)
                 if thisSuburb in this.neighbourhoodSuburbs:        # A neighbour of something
                     for neighbour in this.neighbourhoodSuburbs[thisSuburb]:
                         if neighbour in this.validSuburbs:
                             suburb = neighbour
                             this.logger.debug('scoreSuburb - suburb(%s) is neighbour of (%s)', thisSuburb, neighbour)
-                            break
-                    else:
-                        this.logger.warning('scoreSuburb - Serious configuration Error - unknown suburb(%s)', thisSuburb)
-                        return
-                else:
-                    this.logger.warning('scoreSuburb - Serious Configuration Error - unknown suburb(%s)', thisSuburb)
-                    return
-                if this.validSuburbs[suburb]['SX'][1]:
-                    thisScore = 64
-                else:
-                    thisScore = 48
-                this.result['score'] |= thisScore
-                return
+                            if (suburb in this.validSuburbs) and (this.validSuburbs[suburb]['SX'][1]):
+                                thisScore = 64
+                            else:
+                                thisScore = 48
             else:
                 this.logger.debug('scoreSuburb - checking validSuburb(%s)', thisSuburb)
                 isAPI = this.validSuburbs[thisSuburb]['SX'][1]
@@ -3942,17 +3933,17 @@ And score the returned data
         if locality not in localities:
             this.logger.critical('returnStreetPid - configuration error - localityPid not in localities')
         else:
-            this.logger.critical('returnStreetPid - locality (%s)', locality)
+            this.logger.debug('returnStreetPid - locality (%s)', locality)
             postcode = None
             if locality in localityPostcodes:
                 if (this.validPostcode is None) or (this.validPostcode not in localityPostcodes[locality]):
                     postcode = list(sorted(localityPostcodes[locality]))[0]
-                    this.logger.critical('returnStreetPid - locality postcode (%s)', postcode)
+                    this.logger.debug('returnStreetPid - locality postcode (%s)', postcode)
                 else:
                     postcode = this.validPostcode
-                    this.logger.critical('returnStreetPid - valid postcode (%s)', postcode)
+                    this.logger.debug('returnStreetPid - valid postcode (%s)', postcode)
             # Pick primary locality from localities[localityPid]
-            this.logger.critical('returnStreetPid - choosing statePid (and suburb if None) from (%s)', localities[locality])
+            this.logger.debug('returnStreetPid - choosing statePid (and suburb if None) from (%s)', localities[locality])
             suburb = None
             statePid = None
             for thisStatePid, thisSuburb, thisAlias in localities[locality]:
@@ -3962,7 +3953,7 @@ And score the returned data
                     this.result['isCommunity'] = False
                     break
             if (suburb is None) or (statePid is None):
-                this.logger.critical('returnStreetPid - missing suburb (%s) or statePid (%s) - choosing from (%s)', suburb, statePid, localities[locality])
+                this.logger.debug('returnStreetPid - missing suburb (%s) or statePid (%s) - choosing from (%s)', suburb, statePid, localities[locality])
                 statePid, suburb, thisAlias = list(localities[locality])[0]
                 if thisAlias == 'C':
                     this.result['isCommunity'] = True
@@ -4680,8 +4671,7 @@ The accuracy is
             this.result['score'] |= 12        # An API postcode was supplied and matched the supplied suburb
         else:
             this.result['score'] |= 8        # An address line postcode was supplied and matched the supplied suburb
-        isPost = accuracy2(this, this.bestSuburb, this.validState)
-        if isPost:        # Deal with 'Unused variable' error in Visual Code
+        if accuracy2(this, this.bestSuburb, this.validState):
             pass
         setupAddress1Address2(this, None)
         return
