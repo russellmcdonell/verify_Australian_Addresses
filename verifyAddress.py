@@ -254,7 +254,7 @@ SandTs = ['ACT', 'NSW', 'NT', 'OT', 'QLD', 'SA', 'TAS', 'VIC', 'WA']
 # Set up the default configuration for suburb/street weights and fuzz levels
 # These can be overridden from the configuration file
 suburbSourceWeight = {'G':10, 'GA':9, 'C':8, 'GN':7, 'GS':6, 'GL':5, 'GAS':4, 'GAL':2, 'CL':1, '':0}
-streetSourceWeight = {'G':10, 'GA':9, 'C':8, 'GS':6, 'GL':5, 'GAS':4, 'GAL':2, 'CL':1, '':0}
+streetSourceWeight = {'G':10, 'GA':9, 'C':8, 'GS':6, 'GL':5, 'GAS':4, 'GAL':2, '':0}
 # fuzzLevels
 fuzzLevels = [ 1, 2,  3, 4, 5, 6, 7, 8, 9, 10 ]
 
@@ -2130,7 +2130,7 @@ If nothing found, then look for postal services than cannot include a deliveryNu
                 this.result['isPostalService'] = True
                 this.postalServiceText1 = addressLine[:matched.end()].strip()
                 this.postalServiceText2 = addressLine[matched.end():].strip()
-                this.postalService3 = None
+                this.postalServiceText3 = None
                 this.trim = this.postalServiceText1
                 return True
 
@@ -2147,7 +2147,7 @@ If nothing found, then look for postal services than cannot include a deliveryNu
             this.result['isPostalService'] = True
             this.postalServiceText1 = addressLine[:matched.end()].strip()
             this.postalServiceText2 = addressLine[matched.end():].strip()
-            this.postalService3 = None
+            this.postalServiceText3 = None
             this.trim = this.postalServiceText1
             return True
 
@@ -2841,8 +2841,8 @@ Add sources to this.validStreet for streets in this.validState and this.validPos
         if src in ['SK', 'regex']:
             continue
         places = copy.deepcopy(srcs[src])
-        this.logger.debug('addSources - checking places (%s)', repr(list(places)))
-        if this.validState is not None:
+        # this.logger.debug('addSources - checking places (%s), src (%s)', repr(list(places)), src)
+        if (this.fuzzLevel < 10) and (this.validState is not None):
             # Check if every street in these places is in this state
             for streetPid in list(copy.copy(places)):            # Check each street (that has this soundCode, thisStreetKey, source)
                 if streetPid not in stateStreets[this.validState]:        # This street is not in this state - park this streetPid
@@ -2888,9 +2888,39 @@ Add sources to this.validStreet for streets in this.validState and this.validPos
                               thisStreetKey, src, repr(places))
             if thisStreetKey not in this.validStreets:
                 this.validStreets[thisStreetKey] = {}
+                soundCode = jellyfish.soundex(thisStreetKey)
+                streetParts = thisStreetKey.split('~')
+                this.validStreets[streetKey]['SX'] = [soundCode, streetParts[0], streetParts[1], streetParts[2]]
             if src not in this.validStreets[thisStreetKey]:
                 this.validStreets[thisStreetKey][src] = {}
             this.validStreets[thisStreetKey][src].update(places)
+            if src.startswith('GA'):        # If this is an alias, then add the primary as a valid street name
+                this.logger.debug('addSources - adding primary street for alias street(%s), source(%s), place(%s)',
+                                  thisStreetKey, src, repr(places))
+                for streetPid in list(copy.copy(places)):            # Check each street (that has this soundCode, thisStreetKey, source)
+                    # this.logger.debug('addSources - checking streetPid (%s)', streetPid)
+                    if streetPid in streetNames:
+                        # this.logger.debug('addSources - streetPid (%s) is in streetNames', streetPid)
+                        streetName = None
+                        for streetInfo in streetNames[streetPid]:
+                            # this.logger.debug('addSources - streetInfo (%s)', streetInfo)
+                            if streetInfo[4] == 'P':
+                                streetName = streetInfo[0]
+                                streetType = streetInfo[1]
+                                streetSuffix = streetInfo[2]
+                                streetLocalityPid = streetInfo[3]
+                        if streetName is not None:
+                            newStreetKey = streetName + '~' + streetType + '~' + streetSuffix
+                            this.logger.debug('addSources - adding primary street(%s), for source(%s), place(%s)', newStreetKey, src, repr(places))
+                            if newStreetKey not in this.validStreets:
+                                this.validStreets[newStreetKey] = {}
+                                soundCode = jellyfish.soundex(streetName)
+                                this.validStreets[newStreetKey]['SX'] = [soundCode, streetName, streetType, streetSuffix]
+                            if 'G' not in this.validStreets[newStreetKey]:
+                                this.validStreets[newStreetKey]['G'] = {}
+                            this.validStreets[newStreetKey]['G'].update(places)
+                        else:
+                            this.logger.debug('addSources - primary street name not found')
     return
 
 
@@ -3017,7 +3047,7 @@ Check to see if any of the valid streets are in any of the valid suburbs
     allStreets = set()                  # The set of all valid streets (street pids)
     this.allStreetSources = {}          # The 'street src' ~ 'suburb src' for each street pid
     for streetKey in this.validStreets:
-        for src in ['G', 'GA', 'GS', 'GAS', 'GL', 'GAL', 'CL', 'GN']:       # This is a G-NAF/ABS source
+        for src in ['G', 'GA', 'GS', 'GAS', 'GL', 'GAL']:       # This is a G-NAF/ABS source
             if src in this.validStreets[streetKey]:
                 theseStreets = set(this.validStreets[streetKey][src])        # A set of streetPids
                 for streetPid in theseStreets:
@@ -3081,19 +3111,6 @@ Check to see if any of the valid streets are in any of the valid suburbs
                                         if streetPid not in this.allStreetSources:
                                             this.allStreetSources[streetPid] = ''                # Adding a street that is not in validStreets
                                         this.allStreetSources[streetPid] += '~' + src
-                                    if (src == 'GN') and (localityPid in localities):
-                                        done = set()
-                                        for thisStatePid, thisSuburb, thisAlias in localities[localityPid]:
-                                            neighbour = thisSuburb
-                                            if neighbour in done:
-                                                continue
-                                            done.add(neighbour)
-                                            if neighbour not in this.neighbourhoodSuburbs:
-                                                this.neighbourhoodSuburbs[neighbour] = set()
-                                            this.neighbourhoodSuburbs[neighbour].add(suburb)
-                                            if suburb not in this.neighbourhoodSuburbs:
-                                                this.neighbourhoodSuburbs[suburb] = set()
-                                            this.neighbourhoodSuburbs[suburb].add(neighbour)
             # For communities we have to use the community localityPid to find postcodes and use those to find localities
             # this.logger.debug('validateStreets - checking source(%s)', 'C')
             if 'C' in this.validSuburbs[suburb][statePid]:        # From every source
@@ -3411,7 +3428,7 @@ based upon this.fuzzLevel
                     maxDist = int((suburbLength + 6) / 4)
                     for foundSuburb, isAPI in this.foundSuburbText:
                         dist = jellyfish.levenshtein_distance(foundSuburb, otherSuburb)
-                        this.logger.info('expandSuburbAndStreets - checking (%s) and (%s), distance(%d)', otherSuburb, foundSuburb, dist)
+                        # this.logger.info('expandSuburbAndStreets - checking (%s) and (%s), distance(%d)', otherSuburb, foundSuburb, dist)
                         if dist <= maxDist:
                             this.logger.debug('expandSuburbsAndStreets - adding suburb(%s), distance(%d) from (%s)', otherSuburb, dist, foundSuburb)
                             break
@@ -3439,7 +3456,7 @@ based upon this.fuzzLevel
             if suburb in this.validSuburbs:
                 continue
             soundCode = jellyfish.soundex(suburb)
-            this.logger.info('expandSuburbAndStreets - checking (%s), soundCode (%s)', suburb, soundCode)
+            # this.logger.info('expandSuburbAndStreets - checking (%s), soundCode (%s)', suburb, soundCode)
             if soundCode in suburbs:            # Does any suburb sound like this
                 for otherSuburb in suburbs[soundCode]:
                     if otherSuburb == suburb:
@@ -3519,7 +3536,7 @@ based upon this.fuzzLevel
                                         if src not in this.validSuburbs[otherSuburb][statePid]:
                                             this.validSuburbs[otherSuburb][statePid][src + 'L'] = suburbs[soundCode][otherSuburb][statePid][src]
         # Add Levenshtein Distance suburbs to this.validSuburbs for all foundTextSuburbs, if not already in this.validSuburb
-        this.logger.debug('exandSuburbAndStreets - checking %s', this.foundSuburbText)
+        # this.logger.debug('exandSuburbAndStreets - checking %s', this.foundSuburbText)
         for suburb, isAPI in sorted(this.foundSuburbText):
             if suburb in this.validSuburbs:
                 continue
@@ -3579,12 +3596,11 @@ based upon this.fuzzLevel
             for streetKey in this.parkedWrongPostcode[thisLevel]:
                 if streetKey not in this.validStreets:
                     this.validStreets[streetKey] = {}
-                for src in this.parkedWrongPostcode[thisLevel][streetKey]:
-                    if src not in this.validStreets[streetKey]:
-                        this.validStreets[streetKey][src] = {}
-                    this.logger.debug('fuzzLevel 7 - adding back (wrong postcode) street(%s), source(%s), places(%s)',
-                                     streetKey, src, repr(this.parkedWrongPostcode[thisLevel][streetKey][src]))
-                    this.validStreets[streetKey][src].update(this.parkedWrongPostcode[thisLevel][streetKey][src])
+                    parts = streetKey.split('~')
+                    soundCode = jellyfish.soundex(parts[0])
+                    this.validStreets[streetKey]['SX'] = [soundCode, parts[0], parts[1], parts[2]]
+                srcs = this.parkedWrongPostcode[thisLevel][streetKey]
+                addSources(this, streetKey, srcs)
     elif this.fuzzLevel == 8:
         # Add back the soundex and levenshtein streets for this state, from soundex and levenshtein suburbs
         this.logger.info('expandSuburbAndStreets - adding soundex and Levenshtein streets (wrong postcode, same state)')
@@ -3596,12 +3612,11 @@ based upon this.fuzzLevel
             for streetKey in this.parkedWrongPostcode[thisLevel]:
                 if streetKey not in this.validStreets:
                     this.validStreets[streetKey] = {}
-                for src in this.parkedWrongPostcode[thisLevel][streetKey]:
-                    if src not in this.validStreets[streetKey]:
-                        this.validStreets[streetKey][src] = {}
-                    this.logger.debug('fuzzLevel 7 - adding back (wrong postcode) street(%s), source(%s), places(%s)',
-                                     streetKey, src, repr(this.parkedWrongPostcode[thisLevel][streetKey][src]))
-                    this.validStreets[streetKey][src].update(this.parkedWrongPostcode[thisLevel][streetKey][src])
+                    parts = streetKey.split('~')
+                    soundCode = jellyfish.soundex(parts[0])
+                    this.validStreets[streetKey]['SX'] = [soundCode, parts[0], parts[1], parts[2]]
+                srcs = this.parkedWrongPostcode[thisLevel][streetKey]
+                addSources(this, streetKey, srcs)
         bestSuburb(this)        # Compute the best suburbs
     elif this.fuzzLevel == 9:
         # Add streets with different street types to this.validStreets
@@ -3632,7 +3647,7 @@ based upon this.fuzzLevel
                     otherKey = '~'.join([streetName + ' ' + streetType, otherType, ''])
                 else:
                     otherKey = '~'.join([streetName + ' ' + streetType, otherType, streetSuffix])
-                this.logger.debug('expandSuburbAndStreets - checking street (%s), key (%s)', streetName + ' ' + streetType, otherKey)
+                # this.logger.debug('expandSuburbAndStreets - checking street (%s), key (%s)', streetName + ' ' + streetType, otherKey)
                 if (longSoundCode in streets) and (otherKey in streets[longSoundCode]):
                     if otherKey not in this.validStreets:
                         this.validStreets[otherKey] = {}
@@ -3641,8 +3656,9 @@ based upon this.fuzzLevel
                     addSources(this, otherKey, srcs)
 
         # Add streets with different street types to this.streetName, this.streetType for this.streetName
-        this.logger.debug('expandSuburbAndStreets - checking street (%s), streetType (%s)', this.streetName, this.streetType)
+        # this.logger.debug('expandSuburbAndStreets - checking street (%s), streetType (%s)', this.streetName, this.streetType)
         if this.streetName is not None:
+            soundCode = jellyfish.soundex(this.streetName)
             for otherType in list(streetTypes) + ['']:            # All the street type, plus no street type
                 if (this.streetType is not None) and (otherType == this.streetType):
                     continue
@@ -3650,7 +3666,6 @@ based upon this.fuzzLevel
                     otherKey = '~'.join([this.streetName, otherType, ''])
                 else:
                     otherKey = '~'.join([this.streetName, otherType, this.streetSuffix])
-                soundCode = jellyfish.soundex(this.streetName)
                 if soundCode in streets:
                     if otherKey in streets[soundCode]:
                         if otherKey not in this.validStreets:
@@ -3668,7 +3683,7 @@ based upon this.fuzzLevel
                     otherKey = '~'.join([this.streetName + ' ' + this.streetType, otherType, ''])
                 else:
                     otherKey = '~'.join([this.streetName + ' ' + this.streetType, otherType, this.streetSuffix])
-                this.logger.debug('expandSuburbAndStreets - checking street (%s), key (%s)', this.streetName + ' ' + this.streetType, otherKey)
+                # this.logger.debug('expandSuburbAndStreets - checking street (%s), key (%s)', this.streetName + ' ' + this.streetType, otherKey)
                 if (longSoundCode in streets) and (otherKey in streets[longSoundCode]):
                     if otherKey not in this.validStreets:
                         this.validStreets[otherKey] = {}
@@ -3693,12 +3708,11 @@ based upon this.fuzzLevel
             for streetKey in this.parkedWrongState[thisLevel]:
                 if streetKey not in this.validStreets:
                     this.validStreets[streetKey] = {}
-                for src in this.parkedWrongState[thisLevel][streetKey]:
-                    if src not in this.validStreets[streetKey]:
-                        this.validStreets[streetKey][src] = {}
-                    this.logger.debug('fuzzLevel 7 - adding back (wrong state) street(%s), source(%s), places(%s)',
-                                     streetKey, src, repr(this.parkedWrongState[thisLevel][streetKey][src]))
-                    this.validStreets[streetKey][src].update(this.parkedWrongState[thisLevel][streetKey][src])
+                    parts = streetKey.split('~')
+                    soundCode = jellyfish.soundex(parts[0])
+                    this.validStreets[streetKey]['SX'] = [soundCode, parts[0], parts[1], parts[2]]
+                srcs = this.parkedWrongState[thisLevel][streetKey]
+                addSources(this, streetKey, srcs)
     return
 
 
@@ -3707,13 +3721,16 @@ def scoreStreet(this, streetPid):
 Score this street
     '''
 
+    this.logger.debug('scoreStreet - street (%s)', streetPid)
+
     streetName = None
     bestStreet = None
     for ii, streetInfo in enumerate(streetNames[streetPid]):
-        if (streetName is None) or (streetInfo[3] == 'P'):
+        if (streetName is None) or (streetInfo[4] == 'P'):
             streetName = streetInfo[0]
             streetType = streetInfo[1]
             streetSuffix = streetInfo[2]
+            streetLocalityPid = streetInfo[3]
             bestStreet = ii
     streetInfo = streetNames[streetPid][bestStreet]
     this.street = streetName
@@ -3738,28 +3755,31 @@ Score this street
     # Find the best 'source' for this streetPid
     this.result['score'] &= ~1792
     bestSource = None
-    for key in this.validStreets:
-        for src in ['G', 'GA', 'GS', 'GAS', 'GL', 'GAL', 'CL']:
-            if src not in this.validStreets[key]:
-                continue
-            if streetPid not in this.validStreets[key][src]:
-                continue
-            if src == 'G':
-                bestSource = src
-                this.result['score'] |= 1792
-            elif (src == 'GA') and ((bestSource is None) or (bestSource != 'G')):
-                bestSource = src
-                this.result['score'] |= 1536
-            elif (src in ['GS', 'GAS']) and ((bestSource is None) or (bestSource not in ['G', 'GA'])):
-                bestSource = src
-                this.result['score'] |= 1024
-            elif (src in ['GL', 'GAL', 'CL']) and ((bestSource is None) or (bestSource not in ['G', 'GA', 'GS', 'GAS'])):
-                bestSource = src
-                this.result['score'] |= 768
-            elif (bestSource is None) or (bestSource not in ['G', 'GA', 'GS', 'GAS', 'GL', 'GAL', 'CL']):
-                bestSource = src
-                this.result['score'] |= 768
-            break
+    if streetKey in this.validStreets:
+        this.logger.debug('scoreStreet - choosing best source for street (%s) from (%s)', streetPid, this.validStreets[streetKey])
+    else:
+        this.logger.debug('scoreStreet - streetKey (%s) not in  validStreets (%s)', streetKey, this.validStreets)
+    for src in ['G', 'GA', 'GS', 'GAS', 'GL', 'GAL']:
+        if src not in this.validStreets[streetKey]:
+            continue
+        if streetPid not in this.validStreets[streetKey][src]:
+            continue
+        if src == 'G':
+            bestSource = src
+            this.result['score'] |= 1792
+        elif (src == 'GA') and ((bestSource is None) or (bestSource != 'G')):
+            bestSource = src
+            this.result['score'] |= 1536
+        elif (src in ['GS', 'GAS']) and ((bestSource is None) or (bestSource not in ['G', 'GA'])):
+            bestSource = src
+            this.result['score'] |= 1024
+        elif (src in ['GL', 'GAL']) and ((bestSource is None) or (bestSource not in ['G', 'GA', 'GS', 'GAS'])):
+            bestSource = src
+            this.result['score'] |= 768
+    if bestSource.endswith('S'):
+        bestSource = bestSource[:-1]
+    if bestSource.endswith('L'):
+        bestSource = bestSource[:-1]
     return streetKey, soundCode, streetInfo, bestSource
 
 
@@ -4067,6 +4087,7 @@ The accuracy is
     this.result['score'] = 0
     this.result['status'] = 'Address not found'
     this.result['accuracy'] = '0'
+    this.result['fuzzLevel'] = '-1'
     this.result['messages'] = []
     this.subsetValidStreets = set()
     this.neighbourhoodSuburbs = {}
@@ -5117,7 +5138,7 @@ Validate an address against some known Australian concept (postcode, known Austr
                     sys.exit(EX_USAGE)
                 for source in streetSourceWeight:
                     if source not in streetSourceWeight:
-                        if source not in ['G', 'GA', 'GS', 'GL', 'GAS', 'GAL', 'CL', '']:
+                        if source not in ['G', 'GA', 'GS', 'GL', 'GAS', 'GAL', '']:
                             del streetSourceWeight[source]
             if 'fuzzLevels' in config['weights']:
                 fuzzLevels = config['weights']['fuzzLevels']
