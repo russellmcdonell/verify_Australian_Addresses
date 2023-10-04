@@ -742,7 +742,7 @@ def addStreetName(this, streetPid, streetName, streetType, streetSuffix, localit
     # Build up a list of acceptable equivalent street names
     names = [(streetName, alias)]
     if streetName[:3] == 'MT ':
-        names.append(('MOUNT ' + streetName[3:], alias))
+        names.append(('MOUNT ' + streetName[3:], 'A'))
     # For hyphenated street names we allow both halves as street names aliases
     # Plus the names in the reverse order, plus the parts in either order separated by a space instead of a hyphen
     hyphenParts = streetName.split('-')
@@ -2858,7 +2858,7 @@ Add sources to this.validStreet for streets in this.validState and this.validPos
                     '''
                     this.parkedWrongState[this.fuzzLevel][thisStreetKey][src][streetPid] = places[streetPid]
                     del places[streetPid]        # And remove it from places
-        if (this.fuzzLevel < 9) and (this.validPostcode is not None):
+        if (this.fuzzLevel < 7) and (this.validPostcode is not None):
             # Check if every street in these places is in this postcode
             # To do that we need to find the locality containing this streetPid
             # and then check all the postcodes associates with that locality
@@ -3033,6 +3033,7 @@ Check to see if any of the valid streets are in any of the valid suburbs
     # Check that we have some valid streets
     if len(this.validStreets) == 0:
         this.logger.debug('validateStreets - no valid streets in this.validStreets')
+        this.logger.debug('validateStreets - parkedWrongState (%s), parkedWrongPostcode (%s), parkedWrongStreetType (%s)', this.parkedWrongState, this.parkedWrongPostcode, this.parkedWrongStreetType)
         return False
     this.logger.debug('validateStreets - have (%d) valid streets - %s', len(this.validStreets), repr(sorted(this.validStreets)))
 
@@ -3141,22 +3142,24 @@ Check to see if any of the valid streets are in any of the valid suburbs
     return True
 
 
-def checkHouseNo(this):
+def checkHouseNo(this, bestStreetPid, bestWeight):
     '''
 Check if this.houseNo is in any of the streets in this.subsetValidStreets
     '''
 
     # Check each street
-    this.logger.info('checkHouseNo - streetSourceWeight(%s)', repr(streetSourceWeight))
-    this.logger.info('checkHouseNo - suburbSourceWeight(%s)', repr(suburbSourceWeight))
+    this.logger.info('checkHouseNo - bestStreetPid (%s), bestWeight (%d)', bestStreetPid, bestWeight)
+    this.logger.info('checkHouseNo - streetSourceWeight (%s)', repr(streetSourceWeight))
+    this.logger.info('checkHouseNo - suburbSourceWeight (%s)', repr(suburbSourceWeight))
+    this.logger.info('checkHouseNo - subsetValidStreets (%s)', repr(this.subsetValidStreets))
     foundStreetPid = None
     foundHouseNo = None
     foundWeight = None
     for streetPid in sorted(this.subsetValidStreets):
         if streetPid not in streetNos:        # an alias street
             continue
-        this.logger.debug('checkHouseNo - check street(%s) for house(%d)', streetPid, this.houseNo)
-        this.logger.debug('checkHouseNo - (%s)', repr(sorted(streetNos[streetPid])))
+        # this.logger.debug('checkHouseNo - check street(%s) for house(%d)', streetPid, this.houseNo)
+        # this.logger.debug('checkHouseNo - (%s)', repr(sorted(streetNos[streetPid])))
         if this.houseNo in streetNos[streetPid]:
             if this.isLot:        # We are looking for LOT numbers
                 if not streetNos[streetPid][this.houseNo][3]:
@@ -3170,7 +3173,7 @@ Check if this.houseNo is in any of the streets in this.subsetValidStreets
                 continue
             if srcs[0] not in streetSourceWeight:
                 continue
-            weight = 4 * suburbSourceWeight[srcs[1]] + 6 * streetSourceWeight[srcs[0]]
+            weight = 5 * suburbSourceWeight[srcs[1]] + 10 * streetSourceWeight[srcs[0]]
             if (foundWeight is None) or (foundWeight < weight):
                 foundWeight = weight
                 foundStreetPid = streetPid
@@ -3179,8 +3182,8 @@ Check if this.houseNo is in any of the streets in this.subsetValidStreets
 
     # look for a better nearby match
     houseNum = this.houseNo
-    minHouse = houseNum - 6
-    maxHouse = houseNum + 6
+    minHouse = houseNum - 10
+    maxHouse = houseNum + 11
     houseStep = 2
     foundWeight = None
     for streetPid in sorted(this.subsetValidStreets):
@@ -3188,8 +3191,8 @@ Check if this.houseNo is in any of the streets in this.subsetValidStreets
             continue
         streetType = streetNames[streetPid][0][1]
         if streetType in ['CLOSE', 'COURT', 'PLACE', 'CUL-DE-SAC']:
-            minHouse = houseNum - 3
-            maxHouse = houseNum + 3
+            minHouse = houseNum - 5
+            maxHouse = houseNum + 6
             houseStep = 1
         # this.logger.debug('checkHouseNo - checking street(%s) from (%d) to (%d) in steps of (%d)', streetPid, minHouse, maxHouse, houseStep)
         # this.logger.debug('checkHouseNo - (%s)', repr(sorted(streetNos[streetPid])))
@@ -3210,18 +3213,44 @@ Check if this.houseNo is in any of the streets in this.subsetValidStreets
                 if (foundWeight is None) or (foundWeight < weight):        # We found a better nearby number
                     foundWeight = weight
                     if exactWeight is not None:                            # Check if it is significantly better than the exact match
-                        if weight > exactWeight * 2:
+                        if weight > (exactWeight * 2):
                             foundStreetPid = streetPid
                             foundHouseNo = thisHouse
+                    elif (bestStreetPid is not None) and (streetPid == bestStreetPid):
+                        foundStreetPid = streetPid
+                        foundHouseNo = thisHouse
                     else:
                         foundStreetPid = streetPid
                         foundHouseNo = thisHouse
 
     if foundStreetPid is not None:
-        this.houseNo = foundHouseNo
-        this.result['houseNo'] = str(this.houseNo)
-        returnHouse(this, foundStreetPid, False)
-        return True
+        foundHouse = False
+        exactHouse = False
+        if bestStreetPid is not None:
+            if foundStreetPid == bestStreetPid:         # Found a nearby house in the best street
+                if (exactWeight is not None) and (foundWeight > (exactWeight * 2)):       # Using nearby house number in a different street
+                    this.logger.debug('checkHouseNo - nearby house found in best street, foundWeight (%d)', foundWeight)
+                else:
+                    this.logger.debug('checkHouseNo - house found in best street, foundWeight (%d)', foundWeight)
+                    if exactWeight is not None:
+                        exactHouse = True
+                foundHouse = True
+            elif (exactWeight is not None) and (foundWeight > (exactWeight * 2)):       # Using nearby house number in a different street
+                if (foundWeight * 1.1) > bestWeight:
+                    this.logger.debug('checkHouseNo - nearby house found in a different street, foundWeight (%d)', foundWeight)
+                    foundHouse = True
+            elif (foundWeight * 1.2) > bestWeight:        # An exact match in a different street
+                this.logger.debug('checkHouseNo - house found in a different street, foundWeight (%d)', foundWeight)
+                foundHouse = True
+        else:
+            this.logger.debug('checkHouseNo - possible house found in a different street, foundWeight (%d)', foundWeight)
+            this.result['messages'].append('possible house in different street')
+            foundHouse = True
+        if foundHouse:
+            this.houseNo = foundHouseNo
+            this.result['houseNo'] = str(this.houseNo)
+            returnHouse(this, foundStreetPid, exactHouse)
+            return True
 
     this.logger.debug('checkHouseNo - house not found')
     return False
@@ -3316,7 +3345,7 @@ based upon this.fuzzLevel
                     addSources(this, otherKey, newSources)
     elif this.fuzzLevel == 3:
         # Add Levenshtein Distance streets to this.validStreets for streets already in this.validStreets
-        this.logger.info('expandSuburbAndStreets - adding Levenshtein Distance like streets (same postcode and state)')
+        this.logger.info('expandSuburbAndStreets - adding Levenshtein Distance like streets (same postcode and state) from (%s)', this.validStreets)
         GAset = set(['G', 'GA'])        # Don't expand on sounds like streets
         for streetKey in list(this.validStreets):
             srcs = set(this.validStreets[streetKey])
@@ -3325,8 +3354,8 @@ based upon this.fuzzLevel
             streetName = this.validStreets[streetKey]['SX'][1]
             streetLength = len(streetName)
             maxDist = int((streetLength + 2) / 4)
-            minLen = max(0, streetLength - 2)
-            maxLen = streetLength + 2
+            minLen = max(0, streetLength - int(maxDist * 1.5))
+            maxLen = streetLength + int(maxDist * 1.5) + 1
             processed = set()
             for thisLen in range(minLen, maxLen):
                 if thisLen in streetLen:
@@ -3338,7 +3367,19 @@ based upon this.fuzzLevel
                         if otherKey in processed:
                             continue
                         dist = jellyfish.levenshtein_distance(streetName, streetInfo[1])
+                        toDo = False
                         if dist <= maxDist:
+                            toDo = True
+                        elif dist <= maxDist * 2:
+                            if streetName.startswith(streetInfo[1]):
+                                toDo = True
+                            if streetName.endswith(streetInfo[1]):
+                                toDo = True
+                            if streetInfo[1].startswith(streetName):
+                                toDo = True
+                            if streetInfo[1].endswith(streetName):
+                                toDo = True
+                        if toDo:
                             parts = otherKey.split('~')
                             if this.streetType is None:
                                 if parts[1] != '':
@@ -3366,6 +3407,7 @@ based upon this.fuzzLevel
                             processed.add(otherKey)
         # Add Levenshtein Distance streets to this.validStreets for this.streetName, this.streetType, this.streetSuffix if not already in this.validStreets
         if this.streetName is not None:
+            this.logger.info('expandSuburbAndStreets - adding Levenshtein Distance like streets (same postcode and state) for (%s)', this.streetName)
             soundCode = jellyfish.soundex(this.streetName)
             if this.streetType is None:
                 if this.streetSuffix is None:
@@ -3379,8 +3421,8 @@ based upon this.fuzzLevel
             if streetKey not in list(this.validStreets):
                 streetLength = len(this.streetName)
                 maxDist = int((streetLength + 2) / 4)
-                minLen = max(0, streetLength - 2)
-                maxLen = streetLength + 2
+                minLen = max(0, streetLength - int(maxDist * 1.5))
+                maxLen = streetLength + int(maxDist * 1.5) + 1
                 processed = set()
                 for thisLen in range(minLen, maxLen):
                     if thisLen in streetLen:
@@ -3390,17 +3432,35 @@ based upon this.fuzzLevel
                             if otherKey in processed:
                                 continue
                             dist = jellyfish.levenshtein_distance(this.streetName, streetInfo[1])
+                            # this.logger.info('expandSuburbAndStreets - checking (%s) with maxDist (%d), dist (%s)', streetInfo, maxDist, dist)
+                            toDo = False
                             if dist <= maxDist:
+                                toDo = True
+                            elif dist <= maxDist * 2:
+                                # this.logger.info('expandSuburbAndStreets - checking start/ending match')
+                                if this.streetName.startswith(streetInfo[1]):
+                                    toDo = True
+                                if this.streetName.endswith(streetInfo[1]):
+                                    toDo = True
+                                if streetInfo[1].startswith(this.streetName):
+                                    toDo = True
+                                if streetInfo[1].endswith(this.streetName):
+                                    toDo = True
+                            if toDo:
                                 parts = otherKey.split('~')
                                 if this.streetType is None:
                                     if parts[1] != '':
+                                        this.parkedWrongStreetType.append((soundCode, otherKey))
                                         continue
                                 elif this.streetType != parts[1]:
+                                    this.parkedWrongStreetType.append((soundCode, otherKey))
                                     continue
                                 if this.streetSuffix is None:
                                     if parts[2] != '':
+                                        this.parkedWrongStreetType.append((soundCode, otherKey))
                                         continue
                                 elif this.streetSuffix != parts[2]:
+                                    this.parkedWrongStreetType.append((soundCode, otherKey))
                                     continue
                                 if otherKey not in this.validStreets:
                                     this.validStreets[otherKey] = {}
@@ -3726,6 +3786,7 @@ Score this street
     streetName = None
     bestStreet = None
     for ii, streetInfo in enumerate(streetNames[streetPid]):
+        # this.logger.debug('scoreStreet - streetInfo (%s)', streetInfo)
         if (streetName is None) or (streetInfo[4] == 'P'):
             streetName = streetInfo[0]
             streetType = streetInfo[1]
@@ -3755,31 +3816,53 @@ Score this street
     # Find the best 'source' for this streetPid
     this.result['score'] &= ~1792
     bestSource = None
-    if streetKey in this.validStreets:
-        this.logger.debug('scoreStreet - choosing best source for street (%s) from (%s)', streetPid, this.validStreets[streetKey])
+    if streetKey not in this.validStreets:
+        this.logger.critical('scoreStreet - configuration error - streetKey (%s) not in validStreets (%s)', streetKey, this.validStreets)
+        if soundCode not in streets:
+            this.logger.critical('scoreStreet - configuration error - soundCode (%s) not in streets', soundCode)
+        elif streetKey not in streets[streetKey]:
+            this.logger.critical('scoreStreet - configuration error - streetKey (%s) not in streets[%s]', streetKey, soundCode)
+        else:           # Pick the best you can
+            for src in ['G', 'GA', 'GS', 'GAS', 'GL', 'GAL']:
+                if src not in streets[soundCode][streetKey]:
+                    continue
+                if streetPid not in streets[soundCode][streetKey][src]:
+                    continue
+                if src == 'G':
+                    bestSource = src
+                elif (src == 'GA') and ((bestSource is None) or (bestSource != 'G')):
+                    bestSource = src
+                elif (src in ['GS', 'GAS']) and ((bestSource is None) or (bestSource not in ['G', 'GA'])):
+                    bestSource = src
+                elif (src in ['GL', 'GAL']) and ((bestSource is None) or (bestSource not in ['G', 'GA', 'GS', 'GAS'])):
+                    bestSource = src
+            if bestSource.endswith('S'):
+                bestSource = bestSource[:-1]
+            if bestSource.endswith('L'):
+                bestSource = bestSource[:-1]
     else:
-        this.logger.debug('scoreStreet - streetKey (%s) not in  validStreets (%s)', streetKey, this.validStreets)
-    for src in ['G', 'GA', 'GS', 'GAS', 'GL', 'GAL']:
-        if src not in this.validStreets[streetKey]:
-            continue
-        if streetPid not in this.validStreets[streetKey][src]:
-            continue
-        if src == 'G':
-            bestSource = src
-            this.result['score'] |= 1792
-        elif (src == 'GA') and ((bestSource is None) or (bestSource != 'G')):
-            bestSource = src
-            this.result['score'] |= 1536
-        elif (src in ['GS', 'GAS']) and ((bestSource is None) or (bestSource not in ['G', 'GA'])):
-            bestSource = src
-            this.result['score'] |= 1024
-        elif (src in ['GL', 'GAL']) and ((bestSource is None) or (bestSource not in ['G', 'GA', 'GS', 'GAS'])):
-            bestSource = src
-            this.result['score'] |= 768
-    if bestSource.endswith('S'):
-        bestSource = bestSource[:-1]
-    if bestSource.endswith('L'):
-        bestSource = bestSource[:-1]
+        this.logger.debug('scoreStreet - choosing best source for street (%s) from (%s)', streetPid, this.validStreets[streetKey])
+        for src in ['G', 'GA', 'GS', 'GAS', 'GL', 'GAL']:
+            if src not in this.validStreets[streetKey]:
+                continue
+            if streetPid not in this.validStreets[streetKey][src]:
+                continue
+            if src == 'G':
+                bestSource = src
+                this.result['score'] |= 1792
+            elif (src == 'GA') and ((bestSource is None) or (bestSource != 'G')):
+                bestSource = src
+                this.result['score'] |= 1536
+            elif (src in ['GS', 'GAS']) and ((bestSource is None) or (bestSource not in ['G', 'GA'])):
+                bestSource = src
+                this.result['score'] |= 1024
+            elif (src in ['GL', 'GAL']) and ((bestSource is None) or (bestSource not in ['G', 'GA', 'GS', 'GAS'])):
+                bestSource = src
+                this.result['score'] |= 768
+        if bestSource.endswith('S'):
+            bestSource = bestSource[:-1]
+        if bestSource.endswith('L'):
+            bestSource = bestSource[:-1]
     return streetKey, soundCode, streetInfo, bestSource
 
 
@@ -3788,6 +3871,8 @@ def returnHouse(this, streetPid, exactHouse):
 Set up the return data with the geocoding for this.houseNo in this street
 And score this returned data
     '''
+
+    this.logger.debug('returnHouse - streetPid (%s), exactHouse (%s)', streetPid, exactHouse)
 
     streetKey, soundCode, streetInfo, bestSource = scoreStreet(this, streetPid)
     if streetKey == '':        # Deal with 'Unused variable' error in Visual Code
@@ -4644,7 +4729,7 @@ The accuracy is
         streetFound = validateStreets(this)
 
         if streetFound:
-            # Pick the best street from this.allStreetSources
+            # Pick the best street from this.subsetValidStreets
             bestStreetPid = None
             bestWeight = None
             for streetPid in this.subsetValidStreets:
@@ -4670,7 +4755,7 @@ The accuracy is
             '''
             Check house number - as we have some candidate streets
             '''
-            if (this.houseNo is not None) and checkHouseNo(this):
+            if (this.houseNo is not None) and checkHouseNo(this, bestStreetPid, bestWeight):
                 this.logger.debug('house found')
                 return
 
@@ -4679,7 +4764,7 @@ The accuracy is
         if this.isPostalService and (this.street is None) and (this.bestSuburb is not None):
             break
 
-        if thisFuzz == 8:       # Don't try streets with other street types if we have a valid street
+        if thisFuzz >= 8:       # Don't try streets with other street types, other states if we have a valid street
             if streetFound:
                 break
 
