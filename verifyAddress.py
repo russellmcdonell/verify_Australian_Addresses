@@ -3565,8 +3565,8 @@ based upon this.fuzzLevel
                 continue
             suburbLength = len(suburb)
             maxDist = int((suburbLength + 2) / 4)
-            minLen = max(0, suburbLength - 2)
-            maxLen = min(maxSuburbLen, suburbLength + 2)
+            minLen = max(0, suburbLength - int(maxDist * 1.5))
+            maxLen = suburbLength + int(maxDist * 1.5) + 1
             processed = set()
             # this.logger.debug('expandSuburbAndStreets - checking from %d to %d', minLen, maxLen - 1)
             for thisLen in range(minLen, maxLen):
@@ -3580,7 +3580,19 @@ based upon this.fuzzLevel
                                 continue
                             processed.add(otherSuburb)
                             dist = jellyfish.levenshtein_distance(suburb, otherSuburb)
+                            toDo = False
                             if dist <= maxDist:
+                                toDo = True
+                            elif dist <= maxDist * 2:
+                                if suburb.startswith(otherSuburb):
+                                    toDo = True
+                                if suburb.endswith(otherSuburb):
+                                    toDo = True
+                                if otherSuburb.startswith(suburb):
+                                    toDo = True
+                                if otherSuburb.endswith(suburb):
+                                    toDo = True
+                            if toDo:
                                 if otherSuburb not in this.validSuburbs:
                                     this.validSuburbs[otherSuburb] = {}
                                     isAPI = this.validSuburbs[suburb]['SX'][1]
@@ -3602,8 +3614,8 @@ based upon this.fuzzLevel
                 continue
             suburbLength = len(suburb)
             maxDist = int((suburbLength + 2) / 4)
-            minLen = max(0, suburbLength - 2)
-            maxLen = min(maxSuburbLen, suburbLength + 2)
+            minLen = max(0, suburbLength - int(maxDist * 1.5))
+            maxLen = suburbLength + int(maxDist * 1.5) + 1
             processed = set()
             # this.logger.debug('expandSuburbAndStreets - checking from %d to %d', minLen, maxLen - 1)
             for thisLen in range(minLen, maxLen):
@@ -3617,7 +3629,19 @@ based upon this.fuzzLevel
                                 continue
                             processed.add(otherSuburb)
                             dist = jellyfish.levenshtein_distance(suburb, otherSuburb)
+                            toDo = False
                             if dist <= maxDist:
+                                toDo = True
+                            elif dist <= maxDist * 2:
+                                if suburb.startswith(otherSuburb):
+                                    toDo = True
+                                if suburb.endswith(otherSuburb):
+                                    toDo = True
+                                if otherSuburb.startswith(suburb):
+                                    toDo = True
+                                if otherSuburb.endswith(suburb):
+                                    toDo = True
+                            if toDo:
                                 if otherSuburb not in this.validSuburbs:
                                     this.validSuburbs[otherSuburb] = {}
                                     this.validSuburbs[otherSuburb]['SX'] = [soundCode, isAPI]
