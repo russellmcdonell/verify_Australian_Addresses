@@ -5,7 +5,7 @@
 # pylint: disable=missing-class-docstring, too-many-lines
 
 '''
-A script to test if an address is plausible, or questionable.
+This is the Flask version of verifyAddress.py, a script to test if an address is plausible, or questionable.
 The address can be free text, so we need to look for the normalized parts.
 [The address is a dictionary, which can have 'state', 'postcode' and 'suburb', but must have one or more 'addressLines' of data]
 
@@ -23,8 +23,7 @@ A street can cross locality borders, but in G-NAF an address must have a house n
 SYNOPSIS
 $ python verifyAddress.py [-I inputDir|--inputDir=inputDir] [-O outputDir|--outputDir=outputDir]
                          [-C configDir|--configDir=configDir] [-c configFile|--configFile=configFile]
-                         [-H|--hasHeading] [-m headingsMappingFile|--headingsMappingFile=headingsMappingFile]
-                         [-S|--verifyAddressService] [-P verifyAddressPort|--verifyAddressPort=verifyAddressPort]
+                         [-P verifyAddressPort|--verifyAddressPort=verifyAddressPort]
                          [-G GNAFdir|--GNAFdir=GNAFdir] [-A ABSdir|--ABSdir=ABSdir]
                          [-F dataFilesDirectory|--DataFilesDirectory=dataFilesDirectory]
                          [-N|--NTpostcodes] [-R|--region]
@@ -33,7 +32,7 @@ $ python verifyAddress.py [-I inputDir|--inputDir=inputDir] [-O outputDir|--outp
                          [-u username|--username=username] [-p password|--password=password]
                          [-d databaseName|--databaseName=databaseName]
                          [-x|--addExtras] [-W|configWeights]
-                         [-a|--abbreviate] [-b|--returnBoth] [-i|--indigenious] [-|filename]...
+                         [-a|--abbreviate] [-b|--returnBoth] [-i|--indigenious]
                          [-v loggingLevel|--verbose=logingLevel] [-L logDir|--logDir=logDir] [-l logfile|--logfile=logfile]
 
 REQUIRED
@@ -52,19 +51,8 @@ The directory where the configuration files can be found (default='.')
 -c configFile|--configFile=configFile
 The configuration file (default=verifyAddress.json)
 
--H|--hasHeading
-Files of addresses to be verified are CSV files and have a heading line
-(mapping of heading to data items is defined in the headingsMappingFile)
-Output file will also have headings.
-
--m headingsMappingFile|--headingsMappingFile=headingsMappingFile
-The name of headings mapping file (must be in the configuration directory(default='headings.json')
-
--S|--verifyAddressService
-Run verifyAddress as a service (default=False)
-
 -P verifyAddressPort|--verifyAddressPort=verifyAddressPort
-The port for the verifyAddress service (default=8088)
+The port for the verifyAddress service (default=5000)
 
 -G GNAFdir|--GNAFdir=GNAFdir
 Use the standard G-NAF psv files from this folder
@@ -127,24 +115,25 @@ This script receives and processes a string of text (called an 'Address').
 # Import all the modules that make life easy
 import sys
 import os
+import io
 import argparse
 import logging
+import logging.config
 import csv
 import json
 import collections
 import re
 import copy
-import threading
-import socketserver
-from urllib.parse import parse_qs
-from http.server import BaseHTTPRequestHandler, HTTPServer
 import jellyfish
 import pandas as pd
+from flask import Flask, flash, abort, jsonify, url_for, request, render_template, redirect, send_file, Response
+from flask.logging import default_handler
+from werkzeug.exceptions import HTTPException
+from urllib.parse import urlparse, urlencode, parse_qs, quote, unquote
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import OperationalError
 from sqlalchemy_utils import database_exists
-
 
 
 class VerifyData:
@@ -154,11 +143,17 @@ The Verify Address Data - required for threading
 
     def __init__(self, thisProgName):
 
-        self.logfmt = thisProgName + ' [%(asctime)s]: %(message)s'
+        self.logfmt = thisProgName + ':%(levelname) [%(asctime)s]: %(message)s'
         self.formatter = logging.Formatter(fmt=self.logfmt, datefmt='%d/%m/%y %H:%M:%S %p')
+        self.logger = logging.getLogger(thisProgName)
+        loggingDict = { "version": 1, "formatters": {"simple": {"format": thisProgName + ':%(levelname)<%(thread_id)d> [%(asctime)s]: %(message)s'}}}
+        logging.config.dictConfig(loggingDict)
+        default_handler.setFormatter(self.formatter)
         self.result = {}            # The structured result
+        self.logger.info('VerifyData initialized')
 
 
+app = Flask(__name__)
 
 # This next section is plagurised from /usr/include/sysexits.h
 EX_OK = 0           # successful termination
@@ -186,7 +181,6 @@ inputDir = '.'                  # The directory where the input files will be fo
 outputDir = '.'                 # The directory where the output files will be written
 configDir = '.'                 # The directory where the config files will be found
 configFile = 'verifyAddress.json'    # The default configuration file
-verifyAddressService = None     # Run as a service
 verifyAddressPort = None        # The service port
 GNAFdir = None                  # Use the standard G-NAF psv files from this folder
 ABDdir = None                   # The directory where the standard ABS csv files will be found (default='./G-NAF')
@@ -205,8 +199,6 @@ logDir = '.'                    # The directory where the log files will be writ
 logging_levels = {0:logging.CRITICAL, 1:logging.ERROR, 2:logging.WARNING, 3:logging.INFO, 4:logging.DEBUG}
 loggingLevel = logging.NOTSET        # The default logging level
 logFile = None                  # The name of the logfile (output to stderr if None)
-fh = None                       # The logging handler for file things
-sh = None                       # The logging handler for stdin things
 abbreviate = False              # Output abbreviated street types
 returnBoth = False              # Output returnBothd street types
 
@@ -269,315 +261,439 @@ lastDigit = re.compile(deliveryRange)
 period = re.compile(r'\.')
 
 
-# Create the class for handline http request
-class verifyAddressHandler(BaseHTTPRequestHandler):
-    def log_message(self, fmt, *logArgs):
-        return
+def mkOpenAPI():
+    thisAPI = []
+    thisAPI.append('openapi: 3.0.0')
+    thisAPI.append('info:')
+    thisAPI.append('  title: verifyAddress Service {}')
+    thisAPI.append('  version: 1.0.0')
+    if ('X-Forwarded-Host' in request.headers) and ('X-Forwarded-Proto' in request.headers):
+        thisAPI.append('servers:')
+        thisAPI.append('  [')
+        thisAPI.append(f'''    "url":"{request.headers['X-Forwarded-Proto']}://{request.headers['X-Forwarded-Host']}"''')
+        thisAPI.append('  ]')
+    elif 'Host' in request.headers:
+        thisAPI.append('servers:')
+        thisAPI.append('  [')
+        thisAPI.append(f'''    "url":"{request.headers['Host']}"''')
+        thisAPI.append('  ]')
+    elif 'Forwarded' in request.headers:
+        forwards = request.headers['Forwarded'].split(';')
+        origin = forwards[0].split('=')[1]
+        thisAPI.append('servers:')
+        thisAPI.append('  [')
+        thisAPI.append(f'    "url":"{origin}"')
+        thisAPI.append('  ]')
+    thisAPI.append('paths:')
+    thisAPI.append('  /:')
+    thisAPI.append('    post:')
+    thisAPI.append('      summary: Use the verifyAddress Service to geocode and normalize/standardize the passed address data')
+    thisAPI.append('      operationId: verifyAddress')
+    thisAPI.append('      requestBody:')
+    thisAPI.append('        description: json structure with one tag per item of passed data')
+    thisAPI.append('        content:')
+    thisAPI.append('          application/json:')
+    thisAPI.append('            schema:')
+    thisAPI.append("              $ref: '#/components/schemas/addressInputData'")
+    thisAPI.append('        required: true')
+    thisAPI.append('      responses:')
+    thisAPI.append('        200:')
+    thisAPI.append('          description: Success')
+    thisAPI.append('          content:')
+    thisAPI.append('            application/json:')
+    thisAPI.append('              schema:')
+    thisAPI.append("                $ref: '#/components/schemas/addressOutputData'")
+    thisAPI.append('components:')
+    thisAPI.append('  schemas:')
+    thisAPI.append('    addressInputData:')
+    thisAPI.append('      type: object')
+    thisAPI.append('      properties:')
+    thisAPI.append('        "id":')
+    thisAPI.append('          type: string')
+    thisAPI.append('        "addressLines":')
+    thisAPI.append('          type: array')
+    thisAPI.append('          items:')
+    thisAPI.append('            type: string')
+    thisAPI.append('        "suburb":')
+    thisAPI.append('          type: string')
+    thisAPI.append('        "state":')
+    thisAPI.append('          type: string')
+    thisAPI.append('        "postcode":')
+    thisAPI.append('          type: string')
+    thisAPI.append('    addressOutputData:')
+    thisAPI.append('      type: object')
+    thisAPI.append('      properties:')
+    thisAPI.append('        "id":')
+    thisAPI.append('          type: string')
+    thisAPI.append('        "isPostalService":')
+    thisAPI.append('          type: boolean')
+    thisAPI.append('        "isCommunity":')
+    thisAPI.append('          type: boolean')
+    thisAPI.append('        "buildingName":')
+    thisAPI.append('          type: string')
+    thisAPI.append('        "houseNo":')
+    thisAPI.append('          type: string')
+    thisAPI.append('        "street":')
+    thisAPI.append('          type: string')
+    thisAPI.append('        "addressLine1":')
+    thisAPI.append('          type: string')
+    thisAPI.append('        "addressLine2":')
+    thisAPI.append('          type: string')
+    thisAPI.append('        "addressLine1Abbrev":')
+    thisAPI.append('          type: string')
+    thisAPI.append('        "addressLine2Abbrev":')
+    thisAPI.append('          type: string')
+    thisAPI.append('        "state":')
+    thisAPI.append('          type: string')
+    thisAPI.append('        "suburb":')
+    thisAPI.append('          type: string')
+    thisAPI.append('        "postcode":')
+    thisAPI.append('          type: string')
+    thisAPI.append('        "SA1":')
+    thisAPI.append('          type: string')
+    thisAPI.append('        "LGA":')
+    thisAPI.append('          type: string')
+    thisAPI.append('        "Mesh Block":')
+    thisAPI.append('          type: string')
+    thisAPI.append('        "G-NAF ID":')
+    thisAPI.append('          type: string')
+    thisAPI.append('        "longitude":')
+    thisAPI.append('          type: string')
+    thisAPI.append('        "latitude":')
+    thisAPI.append('          type: string')
+    thisAPI.append('        "score":')
+    thisAPI.append('          type: string')
+    thisAPI.append('        "status":')
+    thisAPI.append('          type: string')
+    thisAPI.append('        "accuracy":')
+    thisAPI.append('          type: string')
+    thisAPI.append('        "fuzzLevel":')
+    thisAPI.append('          type: string')
+    thisAPI.append('        "messages":')
+    thisAPI.append('          type: array')
+    thisAPI.append('          items:')
+    thisAPI.append('            type: string')
+    return '\n'.join(thisAPI)
 
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'text/html')
-        self.end_headers()
-        self.message = '<html><head><title>Geocode an Australian Address</title><link rel="icon" href="data:,"></head><body>'
-        self.message += '<h1>Geocode and Normalize/Standardize an Australian Address</h1>'
-        self.message += '<form method="post" action ="' + self.path + '">'
-        self.message += '<h2>Paste your Australian Address as a single line below</h2>'
-        self.message += '<input type="text" name="line" style="width:70%"></input>'
-        self.message += '<h1>OR</h1>'
-        self.message += '<h2>Paste your semi-structured Australian Address below - then click the Geocode button</h2>'
-        self.message += '<table style="width:70%"><tr>'
-        self.message += '<td style="width:20%;text-align=right">Line1</td>'
-        self.message += '<td><input type="text" name="line1" style="width:80%;text-align=left"></input></td>'
-        self.message += '</tr><tr>'
-        self.message += '<td style="width:20%;text-align=right">Line2</td>'
-        self.message += '<td><input type="text" name="line2" style="width:80%;text-align=left"></input></td>'
-        self.message += '</tr><tr>'
-        self.message += '<td style="width:20%;text-align=right">Suburb</td>'
-        self.message += '<td><input type="text" name="suburb" style="width:80%;text-align=left"></input></td>'
-        self.message += '</tr><tr>'
-        self.message += '<td style="width:20%;text-align=right">State</td>'
-        self.message += '<td><input type="text" name="state" style="width:80%;text-align=left"></input></td>'
-        self.message += '</tr><tr>'
-        self.message += '<td style="width:20%;text-align=right">Postcode</td>'
-        self.message += '<td><input type="text" name="postcode" style="width:80%;text-align=left"></input></td>'
-        self.message += '</tr></table>'
-        self.message += '<h2>then click the Geocode button</h2>'
-        self.message += '<p><input type="submit" value="Geocode this please"/></p>'
-        self.message += '</form></body></html>'
-        self.wfile.write(self.message.encode('utf-8'))
-        return
 
-    def do_POST(self):                # We only handle POST requests
+def convertAtString(thisString):
+    # Convert an @string
+    (status, newValue) = parser.sFeelParse(thisString[2:-1])
+    if 'errors' in status:
+        return thisString
+    else:
+        return newValue
 
-        # Reset all the globals
-        self.data = VerifyData('[verifyAddressService-' + threading.currentThread().getName() + ']')
 
-        # Set up logging for this new thread
-        self.data.logger = logging.getLogger()
+def convertInWeb(thisValue):
+    # Convert a value (string) from the web form
+    if not isinstance(thisValue, str):
+        return thisValue
+    try:
+        newValue = ast.literal_eval(thisValue)
+    except:
+        newValue = thisValue
+    return convertIn(newValue)
 
-        # Get the address data
-        content_len = int(self.headers['Content-Length'])
-        content_type = self.headers['Content-Type'].casefold()
-        try:
-            accept_type = self.headers['Accept'].casefold()
-        except Exception as expt:
-            accept_type = 'text/html'
-        body = self.rfile.read(content_len)    # Get the URL encoded body
-        if content_type == 'application/x-www-form-urlencoded':
-            try:
-                # Create self.data.params to mirror the JSON payload
-                params = parse_qs(body)
-                self.data.params = {}
-                line0 = ''
-                line1 = ''
-                line2 = ''
-                suburb = ''
-                state = ''
-                postcode = ''
-                if b'line' in params:
-                    line0 = params[b'line'][0].decode('ASCII').strip()
-                if b'line1' in params:
-                    line1 = params[b'line1'][0].decode('ASCII').strip()
-                if b'line2' in params:
-                    line2 = params[b'line2'][0].decode('ASCII').strip()
-                if b'suburb' in params:
-                    suburb = params[b'suburb'][0].decode('ASCII').strip()
-                if b'state' in params:
-                    state = params[b'state'][0].decode('ASCII').strip()
-                if b'postcode' in params:
-                    postcode = params[b'postcode'][0].decode('ASCII').strip()
-                if line0 == '':
-                    # Looks like structured data
-                    if line1 == '':
-                        if line2 == '':        # No address lines of any sort
-                            self.data.logger.critical('no lines')
-                            # Return Bad Request
-                            # Now output the web page
-                            self.send_response(200)
-                            self.send_header('Content-type', 'text/html')
-                            self.end_headers()
-                            # Assembling the HTML content
-                            self.message = '<html><head><title>Geocode an Australian Address</title><link rel="icon" href="data:,"></head><body>'
-                            self.message += '<h1>Geocoded and Normalized/Standardized Address</h1>'
-                            self.message += '<h2>Error - no address lines entered</h2>'
-                            self.message += '<h3>Please enter a single line address or a semi-structured address</h3>'
-                            self.message += '<br><a href="' + self.path + '">Click here to Geocode and Normalize/Standardize another Australian Address</a><br>'
-                            self.message += '</body></html>'
-                            self.wfile.write(self.message.encode('utf-8'))
-                            # Shutdown logging
-                            for this_hdlr in self.data.logger.handlers:
-                                this_hdlr.flush()
-                            del self.data
-                            return
-                        self.data.params['addressLines'] = [line2]
-                    elif line2 == '':
-                        self.data.params['addressLines'] = [line1]
-                    else:
-                        self.data.params['addressLines'] = []
-                        self.data.params['addressLines'].append(line1)
-                        self.data.params['addressLines'].append(line2)
-                    if suburb != '':
-                        self.data.params['suburb'] = suburb
-                    if state != '':
-                        self.data.params['state'] = state
-                    if postcode != '':
-                        self.data.params['postcode'] = postcode
-                elif (line1 == '') and (line2 == '') and (suburb == '') and (state == '') and (postcode == ''):
-                    # Looks like unstructured data
-                    self.data.params['addressLines'] = [line0]
+
+def convertIn(newValue):
+    if isinstance(newValue, dict):
+        for key in newValue:
+            if isinstance(newValue[key], int):
+                newValue[key] = float(newValue[key])
+            elif isinstance(newValue[key], str) and (newValue[key][0:2] == '@"') and (newValue[key][-1] == '"'):
+                newValue[key] = convertAtString(newValue[key])
+            elif isinstance(newValue[key], dict) or isinstance(newValue[key], list):
+                newValue[key] = convertIn(newValue[key])
+    elif isinstance(newValue, list):
+        for i in range(len(newValue)):
+            if isinstance(newValue[i], int):
+                newValue[i] = float(newValue[i])
+            elif isinstance(newValue[i], str) and (newValue[i][0:2] == '@"') and (newValue[i][-1] == '"'):
+                newValue[i] = convertAtString(newValue[i])
+            elif isinstance(newValue[i], dict) or isinstance(newValue[i], list):
+                newValue[i] = convertIn(newValue[i])
+    elif isinstance(newValue, str) and (newValue[0:2] == '@"') and (newValue[-1] == '"'):
+        newValue = convertAtString(newValue)
+    return newValue
+
+
+def convertOut(thisValue):
+    if isinstance(thisValue, datetime.date):
+        return '@"' + thisValue.isoformat() + '"'
+    elif isinstance(thisValue, datetime.datetime):
+        return '@"' + thisValue.isoformat(sep='T') + '"'
+    elif isinstance(thisValue, datetime.time):
+        return '@"' + thisValue.isoformat() + '"'
+    elif isinstance(thisValue, datetime.timedelta):
+        sign = ''
+        duration = thisValue.total_seconds()
+        if duration < 0:
+            duration = -duration
+            sign = '-'
+        secs = duration % 60
+        duration = int(duration / 60)
+        mins = duration % 60
+        duration = int(duration / 60)
+        hours = duration % 24
+        days = int(duration / 24)
+        return '@"%sP%dDT%dH%dM%fS"' % (sign, days, hours, mins, secs)
+    elif isinstance(thisValue, bool):
+        if thisValue:
+            return 'true'
+        else:
+            return 'false'
+    elif isinstance(thisValue, int):
+        sign = ''
+        if thisValue < 0:
+            thisValue = -thisValue
+            sign = '-'
+        years = int(thisValue / 12)
+        months = (thisValue % 12)
+        return '@"%sP%dY%dM"' % (sign, years, months)
+    elif isinstance(thisValue, tuple) and (len(thisValue) == 4):
+        (lowEnd, lowVal, highVal, highEnd) = thisValue
+        return '@"' + lowEnd + str(lowVal) + ' .. ' + str(highVal) + highEnd
+    elif thisValue is None:
+        return 'null'
+    elif isinstance(thisValue, dict):
+        for item in thisValue:
+            thisValue[item] = convertOut(thisValue[item])
+        return thisValue
+    elif isinstance(thisValue, list):
+        for i in range(len(thisValue)):
+            thisValue[i] = convertOut(thisValue[i])
+        return thisValue
+    else:
+        return thisValue
+
+
+@app.errorhandler(HTTPException)
+def handle_exception(e):
+    response = e.get_response()
+    response.data = json.dumps({
+        "code": e.code,
+        "name": e.name,
+        "description": e.description,
+        "request": repr(request),
+    })
+    response.context_type = "application/json"
+    return response
+
+
+@app.route('/api', methods=['GET'])
+def api():
+    # Assembling and send the HTML content
+    message = '<html><head><title>The verifyAddress service Open API Specification</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'
+    message += '<h2 style="text-align:center">Open API Specification for the verifyAddress service</h2>'
+    message += '<pre>'
+    openapi = mkOpenAPI()
+    message += openapi
+    message += '</pre>'
+    message += f'''<p style="text-align:center"><b><a href="{url_for('download_api')}">Download the OpenAPI Specification for verifyAddress service</a></b></p>'''
+    message += '<div style="text-align:center;margin:auto">[curl '
+    if ('X-Forwarded-Host' in request.headers) and ('X-Forwarded-Proto' in request.headers):
+        message += f"{request.headers['X-Forwarded-Proto']}://{request.headers['X-Forwarded-Host']}"
+    elif 'Host' in request.headers:
+        message +=    f"{request.headers['Host']}"
+    elif 'Forwarded' in request.headers:
+        forwards = request.headers['Forwarded'].split(';')
+        origin = forwards[0].split('=')[1]
+        message + f'{origin}'
+    message += f"{url_for('download_api')}]</div>"
+    message += f'''<p style="text-align:center"><b><a href="{url_for('splash')}">Return to verifyAddress</a></b></p></body></html>'''
+    return Response(response=message, status=200)
+
+@app.route('/downloadapi', methods=['GET'])
+def download_api():
+
+    yaml = io.BytesIO(bytes(mkOpenAPI(), 'utf-8'))
+
+    return send_file(yaml, as_attachment=True, download_name='verifyAddress.yaml', mimetype='text/plain')
+
+
+@app.route('/', methods=['GET'])
+def splash():
+    message = '<html><head><title>Geocode an Australian Address</title><link rel="icon" href="data:,"></head><body>'
+    message += '<h1>Geocode and Normalize/Standardize an Australian Address</h1>'
+    message += f'''<form id="form" action ="{url_for('verify')}" method="post">'''
+    message += '<h2>Paste your Australian Address as a single line below</h2>'
+    message += '<input type="text" name="line" style="width:70%"></input>'
+    message += '<h1>OR</h1>'
+    message += '<h2>Paste your semi-structured Australian Address below - then click the Geocode button</h2>'
+    message += '<table style="width:70%"><tr>'
+    message += '<td style="width:20%;text-align=right">Line1</td>'
+    message += '<td><input type="text" name="line1" style="width:80%;text-align=left"></input></td>'
+    message += '</tr><tr>'
+    message += '<td style="width:20%;text-align=right">Line2</td>'
+    message += '<td><input type="text" name="line2" style="width:80%;text-align=left"></input></td>'
+    message += '</tr><tr>'
+    message += '<td style="width:20%;text-align=right">Suburb</td>'
+    message += '<td><input type="text" name="suburb" style="width:80%;text-align=left"></input></td>'
+    message += '</tr><tr>'
+    message += '<td style="width:20%;text-align=right">State</td>'
+    message += '<td><input type="text" name="state" style="width:80%;text-align=left"></input></td>'
+    message += '</tr><tr>'
+    message += '<td style="width:20%;text-align=right">Postcode</td>'
+    message += '<td><input type="text" name="postcode" style="width:80%;text-align=left"></input></td>'
+    message += '</tr></table>'
+    message += '<h2>then click the Geocode button</h2>'
+    message += '<p><input type="submit" value="Geocode this please"/></p>'
+    message += '</form></body></html>'
+    message += f'''<p style="text-align:center"><b><a href="{url_for('api')}">OpenAPI Specification for verifyAddress</a></b></p>'''
+    message += '</body></html>'
+    return Response(response=message, status=200)
+
+
+@app.route('/', methods=['POST'])
+def verify():                # Handle POST requests
+
+    # Reset all the globals
+    this = VerifyData('[verifyAddressService]')
+
+    this.logger.debug('%s', repr(request))
+
+    # Get the address data
+    this.data = {}
+    if request.content_type == 'application/x-www-form-urlencoded':         # From the web page
+        for variable in request.form:
+            value = request.form[variable].strip()
+            if value != '':
+                this.data[variable] = convertInWeb(value)
+    else:
+        this.data = request.get_json()
+        for variable in this.data:
+            value = this.data[variable]
+            this.data[variable] = convertIn(value)
+
+    # Check if JSON or HTML response required
+    wantsJSON = False
+    for i in range(len(request.accept_mimetypes)):
+        (mimeType, quality) = request.accept_mimetypes[i]
+        if mimeType == 'application/json':
+            wantsJSON = True
+
+    # Process the request - get the Address to verify
+    this.Address = {}
+    this.Address['addressLines'] = []
+    for addressPart in this.data:
+        if addressPart in ['line', 'line1', 'line2']:
+            this.Address['addressLines'].append(this.data[addressPart])
+        else:
+            this.Address[addressPart] = this.data[addressPart]
+
+    logging.info('verifyAddress data(%s), address(%s), wantsJSON(%s)', this.data, this.Address, wantsJSON)
+
+    # verify the address
+    verifyAddress(this)
+
+    # Check if JSON or HTML response required
+    if wantsJSON:
+        return jsonify(this.result)
+    else:
+        # Assembling the HTML content
+        message = '<html><head><title>Geocode an Australian Address</title><link rel="icon" href="data:,"></head><body>'
+        message += '<h1>Geocoded and Normalized/Standardized Address</h1>'
+        message += '<h2>Geocoded Meta Data</h2>'
+        message += '<table style="width:70%"><tr>'
+        message += '<td style="width:20%;text-align=right">Latitude</td>'
+        message += '<td style="width:80%;text-align=left">' + this.result['latitude'] + '</td>'
+        message += '</tr><tr>'
+        message += '<td style="width:20%;text-align=right">Longitude</td>'
+        message += '<td style="width:80%;text-align=left">' + this.result['longitude'] + '</td>'
+        message += '</tr><tr>'
+        message += '<td style="width:20%;text-align=right">Mesh Block</td>'
+        message += '<td style="width:80%;text-align=left">' + this.result['Mesh Block'] + '</td>'
+        message += '</tr><tr>'
+        message += '<td style="width:20%;text-align=right">SA1</td>'
+        message += '<td style="width:80%;text-align=left">' + this.result['SA1'] + '</td>'
+        message += '</tr><tr>'
+        message += '<td style="width:20%;text-align=right">LGA</td>'
+        message += '<td style="width:80%;text-align=left">' + this.result['LGA'] + '</td>'
+        message += '</tr></table>'
+
+        message += '<h2>Normalized/Standardized Address</h2>'
+        message += '<table style="width:70%"><tr>'
+        if this.result['isPostalService'] and (this.result['buildingName'] != ''):
+            message += '<td style="width:30%;text-align=right">Building Name</td>'
+            message += '<td style="width:60%;text-align=left">' + this.result['buildingName'] + '</td>'
+            message += '</tr><tr>'
+        if (this.result['addressLine1'] != '') and (this.result['addressLine1'][-1] == ','):
+            this.result['addressLine1'] = this.result['addressLine1'][:-1]
+        message += '<td style="width:30%;text-align=right">Address Line 1</td>'
+        message += '<td style="width:60%;text-align=left">' + this.result['addressLine1'] + '</td>'
+        message += '</tr><tr>'
+        if (this.result['addressLine2'] != '') and (this.result['addressLine2'][-1] == ','):
+            this.result['addressLine2'] = this.result['addressLine2'][:-1]
+        message += '<td style="width:30%;text-align=right">Address Line 2</td>'
+        message += '<td style="width:60%;text-align=left">' + this.result['addressLine2'] + '</td>'
+        message += '</tr><tr>'
+        if not this.result['isPostalService'] and (this.result['buildingName'] != ''):
+            message += '<td style="width:30%;text-align=right">Building Name</td>'
+            message += '<td style="width:60%;text-align=left">' + this.result['buildingName'] + '</td>'
+            message += '</tr><tr>'
+        message += '<td style="width:30%;text-align=right">House Number</td>'
+        message += '<td style="width:60%;text-align=left">' + this.result['houseNo'] + '</td>'
+        message += '</tr><tr>'
+        message += '<td style="width:30%;text-align=right">Street</td>'
+        message += '<td style="width:60%;text-align=left">' + this.result['street'] + '</td>'
+        message += '</tr><tr>'
+        message += '<td style="width:30%;text-align=right">Suburb</td>'
+        message += '<td style="width:60%;text-align=left">' + this.result['suburb'] + '</td>'
+        message += '</tr><tr>'
+        message += '<td style="width:30%;text-align=right">Postcode</td>'
+        message += '<td style="width:60%;text-align=left">' + this.result['postcode'] + '</td>'
+        message += '</tr><tr>'
+        message += '<td style="width:30%;text-align=right">State</td>'
+        message += '<td style="width:60%;text-align=left">' + this.result['state'] + '</td>'
+        message += '</tr></table>'
+
+        if returnBoth:
+            message += '<h2>Abbreviated Normalized/Standardized Address</h2>'
+            message += '<table style="width:70%"><tr>'
+            if (this.result['addressLine1Abbrev'] != '') and (this.result['addressLine1Abbrev'][-1] == ','):
+                this.result['addressLine1Abbrev'] = this.result['addressLine1Abbrev'][:-1]
+            message += '<td style="width:30%;text-align=right">Abbreviated Address Line 1</td>'
+            message += '<td style="width:60%;text-align=left">' + this.result['addressLine1Abbrev'] + '</td>'
+            message += '</tr><tr>'
+            if (this.result['addressLine2Abbrev'] != '') and (this.result['addressLine2Abbrev'][-1] == ','):
+                this.result['addressLine2Abbrev'] = this.result['addressLine2Abbrev'][:-1]
+            message += '<td style="width:30%;text-align=right">Abbreviated Address Line 2</td>'
+            message += '<td style="width:60%;text-align=left">' + this.result['addressLine2Abbrev'] + '</td>'
+            message += '</tr></table>'
+
+        message += '<h2>G-NAF ID, Accuracy, Score and Messages</h2>'
+        message += '<table style="width:70%"><tr>'
+        message += '<td style="width:20%;text-align=right">G-NAF ID</td>'
+        message += '<td style="width:80%;text-align=left">' + str(this.result['G-NAF ID']) + '</td>'
+        message += '</tr><tr>'
+        message += '<td style="width:20%;text-align=right">Accuracy</td>'
+        message += '<td style="width:80%;text-align=left">' + str(this.result['accuracy']) + '</td>'
+        message += '</tr><tr>'
+        message += '<td style="width:20%;text-align=right">Fuzz Level</td>'
+        message += '<td style="width:80%;text-align=left">' + str(this.result['fuzzLevel']) + '</td>'
+        message += '</tr><tr>'
+        message += '<td style="width:20%;text-align=right">Score</td>'
+        message += '<td style="width:80%;text-align=left">' + str(this.result['score']) + '</td>'
+        message += '</tr><tr>'
+        message += '<td style="width:20%;text-align=right">Status</td>'
+        message += '<td style="width:80%;text-align=left">' + this.result['status'] + '</td>'
+        if len(this.result['messages']) > 0:
+            message += '</tr><tr>'
+            firstMessage = True
+            for mess in range(len(this.result['messages'])):
+                if firstMessage:
+                    message += '<td style="width:20%;text-align=right">Messages</td>'
+                    firstMessage = False
                 else:
-                    self.data.logger.critical('both single line and semi-structured addresses)')
-                    # It's a mess - both structured and unstructured
-                    # Now output the web page
-                    self.send_response(200)
-                    self.send_header('Content-type', 'text/html')
-                    self.end_headers()
-                    # Assembling the HTML content
-                    self.message = '<html><head><title>Geocode an Australian Address</title><link rel="icon" href="data:,"></head><body>'
-                    self.message += '<h1>Geocoded and Normalized/Standardized Address</h1>'
-                    self.message += '<h2>Error - both single line and semi-structured address entered</h2>'
-                    self.message += '<h3>Please enter a single line address or a semi-structured address</h3>'
-                    self.message += '<br><a href="' + self.path + '">Click here to Geocode and Normalize/Standardize another Australian Address</a><br>'
-                    self.message += '</body></html>'
-                    self.wfile.write(self.message.encode('utf-8'))
-                    # Shutdown logging
-                    for this_hdlr in self.data.logger.handlers:
-                        this_hdlr.flush()
-                    del self.data
-                    return
-            except Exception as ee:
-                # Return Bad Request
-                # Shutdown logging
-                for this_hdlr in self.data.logger.handlers:
-                    this_hdlr.flush()
-                del self.data
-                self.send_error(400)
-                return
-        else:
-            # Read in the JSON payload
-            try:
-                self.data.params = json.loads(body)    # JSON payload
-            except Exception as expt:
-                self.data.logger.critical('Bad JSON')
-                # Return Bad Request
-                # Shutdown logging
-                for this_hdlr in self.data.logger.handlers:
-                    this_hdlr.flush()
-                del self.data
-                self.send_error(400)
-                return
+                    message += '<td style="width:20%;text-align=right"></td>'
+                message += '<td style="width:80%;text-align=left">' + this.result['messages'][mess] + '</td>'
+        message += '</tr></table>'
 
-        # Process the request - get the Address to verify
-        self.data.Address = {}
-        for eachAddressPart in self.data.params:
-            self.data.Address[eachAddressPart] = self.data.params[eachAddressPart]
-
-        self.data.logger.info('verifyAddress address(%s)', self.data.Address)
-
-        # verify the address
-        verifyAddress(self.data)
-
-        # Check if JSON or HTML response required
-        if accept_type == 'application/json':
-            # Return the results
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-
-            # Return the results dictionary
-            self.data.response = json.dumps(self.data.result)
-            self.data.response = self.data.response.encode('utf-8')
-            self.wfile.write(self.data.response)
-        else:
-            # Now output the web page
-            self.send_response(200)
-            self.send_header('Content-type', 'text/html')
-            self.end_headers()
-
-            # Assembling the HTML content
-            self.data.message = '<html><head><title>Geocode an Australian Address</title><link rel="icon" href="data:,"></head><body>'
-            self.data.message += '<h1>Geocoded and Normalized/Standardized Address</h1>'
-            self.data.message += '<h2>Geocoded Meta Data</h2>'
-            self.data.message += '<table style="width:70%"><tr>'
-            self.data.message += '<td style="width:20%;text-align=right">Latitude</td>'
-            self.data.message += '<td style="width:80%;text-align=left">' + self.data.result['latitude'] + '</td>'
-            self.data.message += '</tr><tr>'
-            self.data.message += '<td style="width:20%;text-align=right">Longitude</td>'
-            self.data.message += '<td style="width:80%;text-align=left">' + self.data.result['longitude'] + '</td>'
-            self.data.message += '</tr><tr>'
-            self.data.message += '<td style="width:20%;text-align=right">Mesh Block</td>'
-            self.data.message += '<td style="width:80%;text-align=left">' + self.data.result['Mesh Block'] + '</td>'
-            self.data.message += '</tr><tr>'
-            self.data.message += '<td style="width:20%;text-align=right">SA1</td>'
-            self.data.message += '<td style="width:80%;text-align=left">' + self.data.result['SA1'] + '</td>'
-            self.data.message += '</tr><tr>'
-            self.data.message += '<td style="width:20%;text-align=right">LGA</td>'
-            self.data.message += '<td style="width:80%;text-align=left">' + self.data.result['LGA'] + '</td>'
-            self.data.message += '</tr></table>'
-
-            self.data.message += '<h2>Normalized/Standardized Address</h2>'
-            self.data.message += '<table style="width:70%"><tr>'
-            if self.data.result['isPostalService'] and (self.data.result['buildingName'] != ''):
-                self.data.message += '<td style="width:30%;text-align=right">Building Name</td>'
-                self.data.message += '<td style="width:60%;text-align=left">' + self.data.result['buildingName'] + '</td>'
-                self.data.message += '</tr><tr>'
-            if (self.data.result['addressLine1'] != '') and (self.data.result['addressLine1'][-1] == ','):
-                self.data.result['addressLine1'] = self.data.result['addressLine1'][:-1]
-            self.data.message += '<td style="width:30%;text-align=right">Address Line 1</td>'
-            self.data.message += '<td style="width:60%;text-align=left">' + self.data.result['addressLine1'] + '</td>'
-            self.data.message += '</tr><tr>'
-            if (self.data.result['addressLine2'] != '') and (self.data.result['addressLine2'][-1] == ','):
-                self.data.result['addressLine2'] = self.data.result['addressLine2'][:-1]
-            self.data.message += '<td style="width:30%;text-align=right">Address Line 2</td>'
-            self.data.message += '<td style="width:60%;text-align=left">' + self.data.result['addressLine2'] + '</td>'
-            self.data.message += '</tr><tr>'
-            if not self.data.result['isPostalService'] and (self.data.result['buildingName'] != ''):
-                self.data.message += '<td style="width:30%;text-align=right">Building Name</td>'
-                self.data.message += '<td style="width:60%;text-align=left">' + self.data.result['buildingName'] + '</td>'
-                self.data.message += '</tr><tr>'
-            self.data.message += '<td style="width:30%;text-align=right">House Number</td>'
-            self.data.message += '<td style="width:60%;text-align=left">' + self.data.result['houseNo'] + '</td>'
-            self.data.message += '</tr><tr>'
-            self.data.message += '<td style="width:30%;text-align=right">Street</td>'
-            self.data.message += '<td style="width:60%;text-align=left">' + self.data.result['street'] + '</td>'
-            self.data.message += '</tr><tr>'
-            self.data.message += '<td style="width:30%;text-align=right">Suburb</td>'
-            self.data.message += '<td style="width:60%;text-align=left">' + self.data.result['suburb'] + '</td>'
-            self.data.message += '</tr><tr>'
-            self.data.message += '<td style="width:30%;text-align=right">Postcode</td>'
-            self.data.message += '<td style="width:60%;text-align=left">' + self.data.result['postcode'] + '</td>'
-            self.data.message += '</tr><tr>'
-            self.data.message += '<td style="width:30%;text-align=right">State</td>'
-            self.data.message += '<td style="width:60%;text-align=left">' + self.data.result['state'] + '</td>'
-            self.data.message += '</tr></table>'
-
-            if returnBoth:
-                self.data.message += '<h2>Abbreviated Normalized/Standardized Address</h2>'
-                self.data.message += '<table style="width:70%"><tr>'
-                if (self.data.result['addressLine1Abbrev'] != '') and (self.data.result['addressLine1Abbrev'][-1] == ','):
-                    self.data.result['addressLine1Abbrev'] = self.data.result['addressLine1Abbrev'][:-1]
-                self.data.message += '<td style="width:30%;text-align=right">Abbreviated Address Line 1</td>'
-                self.data.message += '<td style="width:60%;text-align=left">' + self.data.result['addressLine1Abbrev'] + '</td>'
-                self.data.message += '</tr><tr>'
-                if (self.data.result['addressLine2Abbrev'] != '') and (self.data.result['addressLine2Abbrev'][-1] == ','):
-                    self.data.result['addressLine2Abbrev'] = self.data.result['addressLine2Abbrev'][:-1]
-                self.data.message += '<td style="width:30%;text-align=right">Abbreviated Address Line 2</td>'
-                self.data.message += '<td style="width:60%;text-align=left">' + self.data.result['addressLine2Abbrev'] + '</td>'
-                self.data.message += '</tr></table>'
-
-            self.data.message += '<h2>G-NAF ID, Accuracy, Score and Messages</h2>'
-            self.data.message += '<table style="width:70%"><tr>'
-            self.data.message += '<td style="width:20%;text-align=right">G-NAF ID</td>'
-            self.data.message += '<td style="width:80%;text-align=left">' + str(self.data.result['G-NAF ID']) + '</td>'
-            self.data.message += '</tr><tr>'
-            self.data.message += '<td style="width:20%;text-align=right">Accuracy</td>'
-            self.data.message += '<td style="width:80%;text-align=left">' + str(self.data.result['accuracy']) + '</td>'
-            self.data.message += '</tr><tr>'
-            self.data.message += '<td style="width:20%;text-align=right">Fuzz Level</td>'
-            self.data.message += '<td style="width:80%;text-align=left">' + str(self.data.result['fuzzLevel']) + '</td>'
-            self.data.message += '</tr><tr>'
-            self.data.message += '<td style="width:20%;text-align=right">Score</td>'
-            self.data.message += '<td style="width:80%;text-align=left">' + str(self.data.result['score']) + '</td>'
-            self.data.message += '</tr><tr>'
-            self.data.message += '<td style="width:20%;text-align=right">Status</td>'
-            self.data.message += '<td style="width:80%;text-align=left">' + self.data.result['status'] + '</td>'
-            if len(self.data.result['messages']) > 0:
-                self.data.message += '</tr><tr>'
-                firstMessage = True
-                for mess in range(len(self.data.result['messages'])):
-                    if firstMessage:
-                        self.data.message += '<td style="width:20%;text-align=right">Messages</td>'
-                        firstMessage = False
-                    else:
-                        self.data.message += '<td style="width:20%;text-align=right"></td>'
-                    self.data.message += '<td style="width:80%;text-align=left">' + self.data.result['messages'][mess] + '</td>'
-            self.data.message += '</tr></table>'
-
-            self.data.message += '<p><b><a href="' + self.path + '">Click here to Geocode and Normalize/Standardize another Australian Address</a></b><br>'
-            self.data.message += '</body></html>'
-            self.data.response = self.data.message.encode('utf-8')
-            self.wfile.write(self.data.response)
-
-        # Shutdown logging
-        for this_hdlr in self.data.logger.handlers:
-            this_hdlr.flush()
-        del self.data
-        return
-
-
-class ThreadedHTTPServer(socketserver.ThreadingMixIn, HTTPServer) :
-    '''
-Handle requests in a separate thread.
-    '''
-    pass
-
-
-# fork() NOT AVAILABLE ON WINDOWS
-# class ForkingHTTPServer(socketserver.ForkingMixIn, HTTPServer) :
-#     '''
-# Handle requests in a separate thread.
-#     '''
-#     pass
+        message += f'''<p style="text-align:center"><b><a href="{url_for('splash')}">Click here to Geocode and Normalize/Standardize another Australian Address</a></b></p></body></html>'''
+        message += '</body></html>'
+    del this
+    return Response(response=message, status=200)
 
 
 def cleanText(thisText, removeCommas):
@@ -596,11 +712,11 @@ def cleanText(thisText, removeCommas):
         return ''
 
 
-def addPostcode(this, postcode, suburb, statePid, sa1, lga, latitude, longitude):
+def addPostcode(postcode, suburb, statePid, sa1, lga, latitude, longitude):
     '''
     Add postcode data from postcodeSA1LGA, postcode_SA1LGA.csv
     '''
-    # this.logger.debug('Adding postcode (%s), suburb (%s)', postcode, suburb)
+    # logging.debug('Adding postcode (%s), suburb (%s)', postcode, suburb)
 
     global maxSuburbLen
 
@@ -640,11 +756,11 @@ def addPostcode(this, postcode, suburb, statePid, sa1, lga, latitude, longitude)
     return
 
 
-def addSuburb(this, localityPid, statePid, suburb, alias, sa1, lga, latitude, longitude):
+def addSuburb(localityPid, statePid, suburb, alias, sa1, lga, latitude, longitude):
     '''
     Add suburb data from localitySA1LGA, locality_SA1LGA.psv
     '''
-    # this.logger.debug('Adding suburb %s', suburb)
+    # logging.debug('Adding suburb %s', suburb)
 
     global maxSuburbLen
 
@@ -693,11 +809,11 @@ def addSuburb(this, localityPid, statePid, suburb, alias, sa1, lga, latitude, lo
     return
 
 
-def addLocality(this, localityPid, suburb, postcode, statePid, alias):
+def addLocality(localityPid, suburb, postcode, statePid, alias):
     '''
     Add locality data from LOCALITY, LOCALITY_ALIAS, locality.psv
     '''
-    # this.logger.debug('Adding locality %s with postcode (%s) and statePid (%s)', suburb, postcode, statePid)
+    # logging.debug('Adding locality %s with postcode (%s) and statePid (%s)', suburb, postcode, statePid)
 
     if localityPid not in localities:
         localities[localityPid] = set()
@@ -732,11 +848,11 @@ def addLocality(this, localityPid, suburb, postcode, statePid, alias):
     return
 
 
-def addStreetName(this, streetPid, streetName, streetType, streetSuffix, localityPid, alias):
+def addStreetName(streetPid, streetName, streetType, streetSuffix, localityPid, alias):
     '''
     Add street names from STREET_LOCALITY, STREET_LOCALITY_ALIAS, xxx_STREET_LOCALITY_psv.psv, xxx_STREET_LOCALITY_ALIAS_psv.psv, street_details.psv
     '''
-    # this.logger.debug('Adding street name %s %s %s', streetName, streetType, streetSuffix)
+    # logging.debug('Adding street name %s %s %s', streetName, streetType, streetSuffix)
 
     # Deal with street names that contain abbreviations
     # Build up a list of acceptable equivalent street names
@@ -789,11 +905,11 @@ def addStreetName(this, streetPid, streetName, streetType, streetSuffix, localit
     return
 
 
-def addStreet(this, streetPid, sa1, lga, latitude, longitude):
+def addStreet(streetPid, sa1, lga, latitude, longitude):
     '''
     Add street geocode data from streetSA1LGA, street_SA1LGA.psv
     '''
-    # this.logger.debug('Adding street sa1 %s', sa1)
+    # logging.debug('Adding street sa1 %s', sa1)
 
     for name in range(len(streetNames[streetPid])):
         streetName = streetNames[streetPid][name][0]
@@ -857,11 +973,11 @@ def addStreet(this, streetPid, sa1, lga, latitude, longitude):
     return
 
 
-def addStreetNumber(this, buildingName, streetPid, localityPid, postcode, lotNumber, numberFirst, numberLast, mbCode, latitude, longitude, addressPid):
+def addStreetNumber(buildingName, streetPid, localityPid, postcode, lotNumber, numberFirst, numberLast, mbCode, latitude, longitude, addressPid):
     '''
     Add street number from ADDRESS_DETAIL table, xxx_ADDRESS_DETAIL_psv.psv or address_detail.psv
     '''
-    # this.logger.debug('Adding street number %s', str(numberFirst))
+    # logging.debug('Adding street number %s', str(numberFirst))
     if localityPid in localities:       # Count properties in this suburb
         done = set()
         for thisStatePid, thisSuburb, thisAlias in localities[localityPid]:
@@ -920,11 +1036,11 @@ def addStreetNumber(this, buildingName, streetPid, localityPid, postcode, lotNum
     return
 
 
-def addNeighbours(this, localityPid, soundCode, suburb, statePid, done, depth):
+def addNeighbours(localityPid, soundCode, suburb, statePid, done, depth):
     '''
-Add neigbouring locality_pids, for this locality, to this.neiboursSet
+Add neigbouring locality_pids, for this locality, to suburbs
     '''
-    # this.logger.debug('Adding neighbour for suburb(%s), soundCode(%s), locality(%s) in state(%s), depth(%d)', suburb, soundCode, localityPid, states[statePid][0], depth)
+    # logging.debug('Adding neighbour for suburb(%s), soundCode(%s), locality(%s) in state(%s), depth(%d)', suburb, soundCode, localityPid, states[statePid][0], depth)
 
     # Assemble the neighbouring localities
     if localityPid in neighbours:
@@ -933,25 +1049,25 @@ Add neigbouring locality_pids, for this locality, to this.neiboursSet
             if 'GN' not in suburbs[soundCode][suburb][statePid]:
                 suburbs[soundCode][suburb][statePid]['GN'] = {}
             if (neighbour not in suburbs[soundCode][suburb][statePid]['GN']) and (neighbour in localityGeodata):
-                # this.logger.debug('addNeighbour - adding %s', neighbour)
+                # logging.debug('addNeighbour - adding %s', neighbour)
                 suburbs[soundCode][suburb][statePid]['GN'][neighbour] = list(localityGeodata[neighbour])
             # Do neighbours of this neighbour if required
             if (depth > 0) and (neighbour in neighbours) and (neighbour not in done):
-                addNeighbours(this, neighbour, soundCode, suburb, statePid, done, depth - 1)
+                addNeighbours(neighbour, soundCode, suburb, statePid, done, depth - 1)
 
 
-def initData(this):
+def initData():
 
     '''
     Read in the G-NAF tables, Australia Post data and any Other data
     from the specified database (if any) and build up the data structures used to verify addresses.
     '''
 
-    this.logger.info('Starting to initialize data')
+    logging.info('Starting to initialize data')
 
     # Read in the States and compile regular expressions for both the full and abbreviated name
     # We use the state_pid as the key so we can use it to join to other tables
-    this.logger.info('Fetching states')
+    logging.info('Fetching states')
     sts = []
     if DatabaseType is not None:    # Use the database tables
         dfStates = pd.read_sql_query(text('SELECT state_pid, date_retired, state_name, state_abbreviation FROM STATE WHERE date_retired IS NULL'), engine.connect())
@@ -977,7 +1093,7 @@ def initData(this):
                 sts.append([rrow['STATE_PID'], cleanText(rrow['STATE_NAME'], True), rrow['STATE_ABBREVIATION']])
 
     # Now build up states
-    this.logger.info('Building states')
+    logging.info('Building states')
     for state in sts:
         statePid = state[0]
         stateName = state[1]
@@ -1003,9 +1119,9 @@ def initData(this):
                                 states[statePid].append(re.compile(r'\b' + abbrev.replace(' ', r'\s+')))
                             else:
                                 states[statePid].append(re.compile(r'\b' + abbrev.replace(' ', r'\s+') + r'\b'))
-    this.logger.info('%d states fetched', len(states))
+    logging.info('%d states fetched', len(states))
 
-    this.logger.info('Fetching street types and street suffixes')
+    logging.info('Fetching street types and street suffixes')
     if DatabaseType is not None:    # Use the database tables
         dfStreetType = pd.read_sql_query(text('SELECT code, name, description FROM STREET_TYPE_AUT'), engine.connect())
         results = dfStreetType.values.tolist()
@@ -1091,7 +1207,7 @@ def initData(this):
     soundCodes = list(streetTypeSound)
     for soundCode in soundCodes:       # Remove any non-unique ones - two or more different street types that sound the same
         if len(streetTypeSound[soundCode]) > 1:
-            # this.logger.info('Deleting duplicate street type sound (%s) - %s', soundCode, streetTypeSound[soundCode])
+            # logging.info('Deleting duplicate street type sound (%s) - %s', soundCode, streetTypeSound[soundCode])
             del streetTypeSound[soundCode]
 
     # Read in any extra STREET_TYPEs - if required
@@ -1118,10 +1234,10 @@ def initData(this):
                     if rrow['abbrev'] != rrow['streetSuffix']:
                         streetSuffixes[rrow['streetSuffix']].append(re.compile(r'^' + cleanText(rrow['abbrev'], True) + r'\b'))
 
-    this.logger.info('%d street types and %d street suffixes fetched', len(streetTypes), len(streetSuffixes))
+    logging.info('%d street types and %d street suffixes fetched', len(streetTypes), len(streetSuffixes))
 
     # Read in the neighbouring localities
-    this.logger.info('Fetching neighbouring suburbs')
+    logging.info('Fetching neighbouring suburbs')
     nextDoor = []
     if DatabaseType is not None:    # Use the database tables
         dfNeighbour = pd.read_sql_query(text('SELECT date_retired, locality_pid, neighbour_locality_pid FROM LOCALITY_NEIGHBOUR'), engine.connect())
@@ -1171,10 +1287,10 @@ def initData(this):
     neighbourCount = 0
     for locality_pid, neighbourList in neighbours.items():
         neighbourCount += len(neighbourList)
-    this.logger.info('%d Neighbouring suburbs fetched', neighbourCount)
+    logging.info('%d Neighbouring suburbs fetched', neighbourCount)
 
     # Read in ABS linked postcode and suburb data
-    this.logger.info('Fetching locality data')
+    logging.info('Fetching locality data')
     # state_name|postcode|locality_name|SA1_MAINCODE_2016|LGA_CODE_2020|longitude|latitude
     with open(os.path.join(DataDir, 'postcode_SA1LGA.psv'), 'rt', newline='', encoding='utf-8') as SA1LGAfile:
         SA1LGAreader = csv.DictReader(SA1LGAfile, dialect=csv.excel, delimiter='|')
@@ -1196,13 +1312,13 @@ def initData(this):
                     continue
                 break
             else:
-                this.logger.warning('Invalid state(%s) for suburb(%s) in postcodeSA1LGA.psv file', str(rrow['state_name'].upper()), str(suburb))
+                logging.warning('Invalid state(%s) for suburb(%s) in postcodeSA1LGA.psv file', str(rrow['state_name'].upper()), str(suburb))
                 continue
             sa1 = rrow['SA1_MAINCODE_2016']
             lga = rrow['LGA_CODE_2020']
             longitude = rrow['longitude']
             latitude = rrow['latitude']
-            addPostcode(this, postcode, suburb, statePid, sa1, lga, latitude, longitude)
+            addPostcode(postcode, suburb, statePid, sa1, lga, latitude, longitude)
 
     # Read in any extra postcode and suburb - if required
     if addExtras:
@@ -1227,23 +1343,23 @@ def initData(this):
                         continue
                     break
                 else:
-                    this.logger.warning('Invalid state(%s) for suburb(%s) in postcodeSA1LGA.psv file', str(rrow['state_name'].upper()), str(suburb))
+                    logging.warning('Invalid state(%s) for suburb(%s) in postcodeSA1LGA.psv file', str(rrow['state_name'].upper()), str(suburb))
                     continue
                 sa1 = rrow['SA1_MAINCODE_2016']
                 lga = rrow['LGA_CODE_2020']
                 longitude = rrow['longitude']
                 latitude = rrow['latitude']
-                addPostcode(this, postcode, suburb, statePid, sa1, lga, latitude, longitude)
+                addPostcode(postcode, suburb, statePid, sa1, lga, latitude, longitude)
 
     # Read in the suburbs (locality names) and create regular expressions so we can look for them.
-    this.logger.info('Fetching suburbs')
+    logging.info('Fetching suburbs')
     if DatabaseType is not None:    # Use the database tables
         dfLocality = pd.read_sql_query(text('SELECT locality_pid, date_retired, locality_name, state_pid, primary_postcode, \'P\' as alias FROM LOCALITY UNION SELECT locality_pid, date_retired, name as locality_name, state_pid, postcode, \'A\' as alias FROM LOCALITY_ALIAS'), engine.connect())
         results = dfLocality.values.tolist()
         for (locality_pid, date_retired, suburb, state_pid, postcode, alias) in results:
             if date_retired is not None:
                 continue
-            addLocality(this, locality_pid, suburb, postcode, state_pid, alias)
+            addLocality(locality_pid, suburb, postcode, state_pid, alias)
     elif GNAFdir is not None:       # Use the standard G-NAF CSV files
         # LOCALITY_PID|DATE_CREATED|DATE_RETIRED|LOCALITY_NAME|PRIMARY_POSTCODE|LOCALITY_CLASS_CODE|STATE_PID|GNAF_LOCALITY_PID|GNAF_RELIABILITY_CODE
         for SandT in SandTs:
@@ -1256,7 +1372,7 @@ def initData(this):
                     suburb = cleanText(rrow['LOCALITY_NAME'], True)
                     postcode = rrow['PRIMARY_POSTCODE']
                     statePid = rrow['STATE_PID']
-                    addLocality(this, localityPid, suburb, postcode, statePid, 'P')
+                    addLocality(localityPid, suburb, postcode, statePid, 'P')
         # LOCALITY_ALIAS_PID|DATE_CREATED|DATE_RETIRED|LOCALITY_PID|NAME|POSTCODE|ALIAS_TYPE_CODE|STATE_PID
         for SandT in SandTs:
             with open(os.path.join(GNAFdir, 'Standard', SandT + '_LOCALITY_ALIAS_psv.psv'), 'rt', newline='', encoding='utf-8') as suburbFile:
@@ -1268,7 +1384,7 @@ def initData(this):
                     suburb = cleanText(rrow['NAME'], True)
                     postcode = rrow['POSTCODE']
                     statePid = rrow['STATE_PID']
-                    addLocality(this, localityPid, suburb, postcode, statePid, 'A')
+                    addLocality(localityPid, suburb, postcode, statePid, 'A')
 
     else:           # Use the optimised PSV files
         # LOCALITY_PID|LOCALITY_NAME|PRIMARY_POSTCODE|STATE_PID|ALIAS
@@ -1280,7 +1396,7 @@ def initData(this):
                 postcode = rrow['PRIMARY_POSTCODE']
                 statePid = rrow['STATE_PID']
                 alias = rrow['ALIAS']
-                addLocality(this, localityPid, suburb, postcode, statePid, alias)
+                addLocality(localityPid, suburb, postcode, statePid, alias)
 
     # Read in any extra localities - if required
     if addExtras:
@@ -1293,7 +1409,7 @@ def initData(this):
                 postcode = rrow['postcode']
                 statePid = rrow['state_pid']
                 alias = rrow['alias']
-                addLocality(this, localityPid, suburb, postcode, statePid, alias)
+                addLocality(localityPid, suburb, postcode, statePid, alias)
 
     # Next read in the G-NAF locality data linked to ABS SA1 and LGA - locality_SA1LGA.psv
     # locality_pid|Postcode|SA1_MAINCODE_2016|LGA_CODE_2020|longitude|latitude
@@ -1309,8 +1425,8 @@ def initData(this):
             longitude = rrow['longitude']
             latitude = rrow['latitude']
             for statePid, suburb, alias in localities[localityPid]:
-                addSuburb(this, localityPid, statePid, suburb, alias, sa1, lga, latitude, longitude)
-                addPostcode(this, postcode, suburb, statePid, sa1, lga, latitude, longitude)
+                addSuburb(localityPid, statePid, suburb, alias, sa1, lga, latitude, longitude)
+                addPostcode(postcode, suburb, statePid, sa1, lga, latitude, longitude)
 
     # Read in indigenious communities if required
     if indigenious:
@@ -1323,7 +1439,7 @@ def initData(this):
                 postcode = rrow['Postcode']
                 statePid = rrow['state_pid']
                 alias = 'C'
-                addLocality(this, localityPid, suburb, postcode, statePid, alias)
+                addLocality(localityPid, suburb, postcode, statePid, alias)
                 sa1 = rrow['SA1_MAINCODE_2016']
                 lga = rrow['LGA_CODE_2020']
                 longitude = rrow['longitude']
@@ -1334,7 +1450,7 @@ def initData(this):
                     if suburb not in postcodes[postcode]:
                         postcodes[postcode][suburb] = {}
                     postcodes[postcode][suburb][statePid] = [sa1, lga, latitude, longitude]
-                addSuburb(this, localityPid, statePid, suburb, alias, sa1, lga, latitude, longitude)
+                addSuburb(localityPid, statePid, suburb, alias, sa1, lga, latitude, longitude)
         # description
         with open(os.path.join(DataDir, 'community.txt'), 'rt', newline='', encoding='utf-8') as communityFile:
             communityReader = csv.DictReader(communityFile, dialect=csv.excel)
@@ -1345,16 +1461,16 @@ def initData(this):
     countOfSuburbs = 0
     for soundCode, suburbList in suburbs.items():
         countOfSuburbs += len(suburbList)
-    this.logger.info('%d suburbs and %d localities fetched', countOfSuburbs, len(localities))
+    logging.info('%d suburbs and %d localities fetched', countOfSuburbs, len(localities))
 
     # Read in street data
-    this.logger.info('Fetching street names data')
+    logging.info('Fetching street names data')
     if DatabaseType is not None:    # Use the database tables
         # Read in the street names
         dfStreetLocality = pd.read_sql_query(text('SELECT street_locality_pid, street_name, street_type_code, street_suffix_code, locality_pid FROM STREET_LOCALITY WHERE date_retired IS NULL'), engine.connect())
         results = dfStreetLocality.values.tolist()
         for (streetPid, streetName, streetType, streetSuffix, localityPid) in results:
-            addStreetName(this, streetPid, cleanText(streetName, True), cleanText(streetType, True), cleanText(streetSuffix, True), localityPid, 'P')
+            addStreetName(streetPid, cleanText(streetName, True), cleanText(streetType, True), cleanText(streetSuffix, True), localityPid, 'P')
 
         dfStreetLocality = pd.read_sql_query(text('SELECT street_locality_pid, street_name, street_type_code, street_suffix_code FROM STREET_LOCALITY_ALIAS WHERE date_retired IS NULL'), engine.connect())
         results = dfStreetLocality.values.tolist()
@@ -1362,7 +1478,7 @@ def initData(this):
             if streetPid not in streetNames:
                 continue
             localityPid = streetNames[streetPid][0][3]
-            addStreetName(this, streetPid, cleanText(streetName, True), cleanText(streetType, True), cleanText(streetSuffix, True), localityPid, 'A')
+            addStreetName(streetPid, cleanText(streetName, True), cleanText(streetType, True), cleanText(streetSuffix, True), localityPid, 'A')
 
     elif GNAFdir is not None:       # Use the standard G-NAF PSV files
         # STREET_LOCALITY_PID|DATE_CREATED|DATE_RETIRED|STREET_CLASS_CODE|STREET_NAME|STREET_TYPE_CODE|STREET_SUFFIX_CODE|LOCALITY_PID|GNAF_STREET_PID|GNAF_STREET_CONFIDENCE|GNAF_RELIABILITY_CODE
@@ -1377,7 +1493,7 @@ def initData(this):
                     streetType = cleanText(rrow['STREET_TYPE_CODE'], True)
                     streetSuffix = cleanText(rrow['STREET_SUFFIX_CODE'], True)
                     localityPid = rrow['LOCALITY_PID']
-                    addStreetName(this, streetPid, streetName, streetType, streetSuffix, localityPid, 'P')
+                    addStreetName(streetPid, streetName, streetType, streetSuffix, localityPid, 'P')
 
         # STREET_LOCALITY_ALIAS_PID|DATE_CREATED|DATE_RETIRED|STREET_LOCALITY_PID|STREET_NAME|STREET_TYPE_CODE|STREET_SUFFIX_CODE|ALIAS_TYPE_CODE
         for SandT in SandTs:
@@ -1393,7 +1509,7 @@ def initData(this):
                     if streetPid not in streetNames:
                         continue
                     localityPid = streetNames[streetPid][0][3]
-                    addStreetName(this, streetPid, streetName, streetType, streetSuffix, localityPid, 'A')
+                    addStreetName(streetPid, streetName, streetType, streetSuffix, localityPid, 'A')
 
     else:           # Use the optimised PSV files
         # STREET_LOCALITY_PID|STREET_NAME|STREET_TYPE_CODE|STREET_SUFFIX_CODE|LOCALITY_PID
@@ -1405,7 +1521,7 @@ def initData(this):
                 streetType = cleanText(rrow['STREET_TYPE_CODE'], True)
                 streetSuffix = cleanText(rrow['STREET_SUFFIX_CODE'], True)
                 localityPid = rrow['LOCALITY_PID']
-                addStreetName(this, streetPid, streetName, streetType, streetSuffix, localityPid, 'P')
+                addStreetName(streetPid, streetName, streetType, streetSuffix, localityPid, 'P')
         # STREET_LOCALITY_PID|STREET_NAME|STREET_TYPE_CODE|STREET_SUFFIX_CODE
         with open(os.path.join(DataDir, 'street_details_alias.psv'), 'rt', newline='', encoding='utf-8') as street_detailsFile:
             street_detailsReader = csv.DictReader(street_detailsFile, dialect=csv.excel, delimiter='|')
@@ -1417,14 +1533,14 @@ def initData(this):
                 if streetPid not in streetNames:
                     continue
                 localityPid = streetNames[streetPid][0][3]
-                addStreetName(this, streetPid, streetName, streetType, streetSuffix, localityPid, 'A')
+                addStreetName(streetPid, streetName, streetType, streetSuffix, localityPid, 'A')
     streetCount = 0
     for street_pid, namesList in streetNames.items():
         streetCount += len(namesList)
-    this.logger.info('%d street names fetched', streetCount)
+    logging.info('%d street names fetched', streetCount)
 
     # Read in street SA1/LGA data
-    this.logger.info('Fetching street SA1/LGA data')
+    logging.info('Fetching street SA1/LGA data')
     # street_locality_pid|SA1_MAINCODE_2016|LGA_CODE_2020|longitude|latitude
     streetCount = 0
     with open(os.path.join(DataDir, 'street_SA1LGA.psv'), 'rt', newline='', encoding='utf-8') as SA1LGAfile:
@@ -1436,11 +1552,11 @@ def initData(this):
             lga = rrow['LGA_CODE_2020']
             longitude = rrow['longitude']
             latitude = rrow['latitude']
-            addStreet(this, streetPid, sa1, lga, latitude, longitude)
-    this.logger.info('%d street SA1s/LGAs fetched', streetCount)
+            addStreet(streetPid, sa1, lga, latitude, longitude)
+    logging.info('%d street SA1s/LGAs fetched', streetCount)
 
     # Read in street numbers
-    this.logger.info('Fetching street numbers')
+    logging.info('Fetching street numbers')
     if DatabaseType is not None:    # Use the database tables
         # We need some mesh block stuff
         addressMB = {}
@@ -1486,7 +1602,7 @@ def initData(this):
             latitude = None
             if addressPid in defaultGeocode:
                 latitude, longitude = defaultGeocode[addressPid]
-            addStreetNumber(this, buildingName, streetPid, localityPid, postcode, lotNumber, numberFirst, numberLast, mbCode, latitude, longitude, addressPid)
+            addStreetNumber(buildingName, streetPid, localityPid, postcode, lotNumber, numberFirst, numberLast, mbCode, latitude, longitude, addressPid)
 
     elif GNAFdir is not None:       # Use the standard G-NAF PSV files
         # We need some mesh block stuff
@@ -1559,7 +1675,7 @@ def initData(this):
                     latitude = None
                     if addressPid in defaultGeocode:
                         latitude, longitude = defaultGeocode[addressPid]
-                    addStreetNumber(this, buildingName, streetPid, localityPid, postcode, lotNumber, numberFirst, numberLast, mbCode, latitude, longitude, addressPid)
+                    addStreetNumber(buildingName, streetPid, localityPid, postcode, lotNumber, numberFirst, numberLast, mbCode, latitude, longitude, addressPid)
 
     else:           # Use the optimised PSV files
         # We need some mesh block stuff
@@ -1618,13 +1734,13 @@ def initData(this):
                 latitude = None
                 if addressPid in defaultGeocode:
                     latitude, longitude = defaultGeocode[addressPid]
-                addStreetNumber(this, buildingName, streetPid, localityPid, postcode, lotNumber, numberFirst, numberLast, mbCode, latitude, longitude, addressPid)
+                addStreetNumber(buildingName, streetPid, localityPid, postcode, lotNumber, numberFirst, numberLast, mbCode, latitude, longitude, addressPid)
     numbersCount = 0
     for street_pid, numbersList in streetNos.items():
         numbersCount += len(numbersList)
-    this.logger.info('%d street numbers fetched', numbersCount)
+    logging.info('%d street numbers fetched', numbersCount)
 
-    this.logger.info('Fetching flats, units and trims')
+    logging.info('Fetching flats, units and trims')
     if DatabaseType is not None:    # Use the database tables
         dfFlat = pd.read_sql_query(text('SELECT code, name, description FROM FLAT_TYPE_AUT'), engine.connect())
         results = dfFlat.values.tolist()
@@ -1688,9 +1804,9 @@ def initData(this):
                 for rrow in trimReader:
                     extraTrims.append(re.compile(r'\b' + cleanText(rrow['code'], True) + r'\s*'))
 
-    this.logger.info('%d extra flats, units and trims fetched', len(extraTrims))
+    logging.info('%d extra flats, units and trims fetched', len(extraTrims))
 
-    this.logger.info('Fetching postal delivery services')
+    logging.info('Fetching postal delivery services')
     # Use the  PSV files
     if os.path.isfile(os.path.join(DataDir, 'serviceDelivery.psv')):
         # Code|Cardinality
@@ -1707,10 +1823,10 @@ def initData(this):
                     services.append([re.compile(r'\b' + code + r'( *' + deliveryNumber + r')?\s*'), cardinality])
                 else:
                     services.append([re.compile(r'\b' + code + r'( *' + deliveryNumber + r')\s*'), cardinality])
-    this.logger.info('%d postal delivery services fetched', len(services))
+    logging.info('%d postal delivery services fetched', len(services))
 
     # Read in SA1 and LGA data
-    this.logger.info('Fetching Mesh Block SA1 and LGA codes')
+    logging.info('Fetching Mesh Block SA1 and LGA codes')
     if GNAFdir is not None:       # Use the standard ABS Mesh Block and LGA csv files
         # MB_CODE_2016,MB_CATEGORY_NAME_2016,SA1_MAINCODE_2016,SA1_7DIGITCODE_2016,SA2_MAINCODE_2016,SA2_5DIGITCODE_2016,SA2_NAME_2016,SA3_CODE_2016,SA3_NAME_2016,SA4_CODE_2016,SA4_NAME_2016,GCCSA_CODE_2016,GCCSA_NAME_2016,STATE_CODE_2016,STATE_NAME_2016,AREA_ALBERS_SQKM
         for SandT in SandTs:
@@ -1740,7 +1856,7 @@ def initData(this):
             for rrow in mbReader:
                 LGAmap[rrow['MB_CODE_2016']] = rrow['LGA_CODE_2020']
 
-    this.logger.info('%d Mesh Blocks and %d LGA codes fetched', len(SA1map), len(LGAmap))
+    logging.info('%d Mesh Blocks and %d LGA codes fetched', len(SA1map), len(LGAmap))
 
     # Finally, and in all the neigbours for Australia Post postcodes
     done = set()
@@ -1752,16 +1868,16 @@ def initData(this):
                 for src in ['G', 'GA']:
                     if src in srcs:
                         for localityPid in srcs[src]:
-                            # this.logger.debug('Creating neighbours for suburb (%s)', suburb)
-                            addNeighbours(this, localityPid, soundCode, suburb, statePid, done, 2)
+                            # logging.debug('Creating neighbours for suburb (%s)', suburb)
+                            addNeighbours(localityPid, soundCode, suburb, statePid, done, 2)
                 if 'A' in srcs:
                     for postcode in srcs['A']:
                         if postcode in postcodeLocalities:
                             for localityPid in postcodeLocalities[postcode]:
-                                # this.logger.debug('Creating neighbours for postcode (%s)', postcode)
-                                addNeighbours(this, localityPid, soundCode, suburb, statePid, done, 2)
+                                # logging.debug('Creating neighbours for postcode (%s)', postcode)
+                                addNeighbours(localityPid, soundCode, suburb, statePid, done, 2)
 
-    this.logger.info('Finished initializing data')
+    logging.info('Finished initializing data')
 
     return
 
@@ -5034,14 +5150,8 @@ Validate an address against some known Australian concept (postcode, known Austr
                         help='The name of the configuration directory (default .)')
     parser.add_argument('-c', '--configFile', dest='configFile', default='verifyAddress.json',
                         help='The name of the configuration file (default verifyAddress.json)')
-    parser.add_argument('-H', '--hasHeading', dest='hasHeading', action='store_true',
-                        help='Files of address is CSV and has a heading line')
-    parser.add_argument('-m', '--headingsMappingFile', dest='headingsMappingFile', default='headings.json',
-                        help='The name of headings mapping file in the configuration directory(default headings.json)')
-    parser.add_argument('-S', '--verifyAddressService', dest='verifyAddressService', action='store_true',
-                        help='Run verifyAddress as a service')
-    parser.add_argument('-P', '--verifyAddressPort', dest='verifyAddressPort', type=int, default=8086,
-                        help='The port for the verifyAddress service (default=8086)')
+    parser.add_argument('-P', '--verifyAddressPort', dest='verifyAddressPort', type=int, default=5000,
+                        help='The port for the verifyAddress service (default=5000)')
     parser.add_argument('-G', '--GNAFdir', dest='GNAFdir', help='Use the standard G-NAF psv files from this folder')
     parser.add_argument('-A', '--ABSdir', dest='ABSdir', default='./ABS',
                         help='The directory where the standard ABS csv files will be found (default=./ABS)')
@@ -5074,9 +5184,6 @@ Validate an address against some known Australian concept (postcode, known Austr
     outputDir = args.outputDir
     configDir = args.configDir
     configFile = args.configFile
-    hasHeading = args.hasHeading
-    headingsMappingFile = args.headingsMappingFile
-    verifyAddressService = args.verifyAddressService
     verifyAddressPort = args.verifyAddressPort
     GNAFdir = args.GNAFdir
     ABSdir = args.ABSdir
@@ -5106,43 +5213,34 @@ Validate an address against some known Australian concept (postcode, known Austr
         sys.stderr.flush()
         sys.exit(EX_USAGE)
 
-    # Set up the VerifyData - just in case we are not running as a service
-    verifydata = VerifyData(progName)
-
-    # Set up logging - unless we are running as a service
-    if loggingLevel and (loggingLevel not in logging_levels):
-        sys.stderr.write(f'Error - invalid logging verbosity ({loggingLevel})\n')
+    # Set up logging
+    logging_levels = {0:logging.CRITICAL, 1:logging.ERROR, 2:logging.WARNING, 3:logging.INFO, 4:logging.DEBUG}
+    logfmt = progName + ' [%(asctime)s]: %(message)s'
+    if loggingLevel and (loggingLevel not in logging_levels) :
+        sys.stderr.write('Error - invalid logging verbosity (%d)\n' % (loggingLevel))
         parser.print_usage(sys.stderr)
         sys.stderr.flush()
         sys.exit(EX_USAGE)
-    verifydata.logger = logging.getLogger()
-    verifydata.logger.setLevel(logging.NOTSET)
-    if logFile is not None:        # If sending to a file then check if the log directory exists
+    if logFile :        # If sending to a file then check if the log directory exists
         # Check that the logDir exists
-        if not os.path.isdir(logDir):
-            sys.stderr.write(f'Error - logDir ({logDir}) does not exits\n')
+        if not os.path.isdir(logDir) :
+            sys.stderr.write('Error - logDir (%s) does not exits\n' % (logDir))
             parser.print_usage(sys.stderr)
             sys.stderr.flush()
             sys.exit(EX_USAGE)
-        with open(os.path.join(logDir,logFile), 'wt', newline='', encoding='utf-8') as logfile:
+        with open(os.path.join(logDir,logFile), 'w') as logfile :
             pass
-        fh = logging.FileHandler(filename=os.path.join(logDir, logFile))
-        fh.setFormatter(verifydata.formatter)
-        if loggingLevel    :    # Change the logging level from "WARN" if the -v vebose option is specified
-            fh.setLevel(logging_levels[loggingLevel])
-        else:
-            fh.setLevel(logging.WARNING)
-        verifydata.logger.addHandler(fh)
-        print(f'Now logging to {os.path.join(logDir, logFile)}')
+        if loggingLevel :
+            logging.basicConfig(format=logfmt, datefmt='%d/%m/%y %H:%M:%S %p', level=logging_levels[loggingLevel], filename=os.path.join(logDir, logFile))
+        else :
+            logging.basicConfig(format=logfmt, datefmt='%d/%m/%y %H:%M:%S %p', filename=os.path.join(logDir, logFile))
+        print('Now logging to %s' % (os.path.join(logDir, logFile)))
         sys.stdout.flush()
-    else:
-        sh = logging.StreamHandler(sys.stderr)
-        sh.setFormatter(verifydata.formatter)
-        if loggingLevel    :    # Change the logging level from "WARN" if the -v vebose option is specified
-            sh.setLevel(logging_levels[loggingLevel])
-        else:
-            sh.setLevel(logging.WARNING)
-        verifydata.logger.addHandler(sh)
+    else :
+        if loggingLevel :
+            logging.basicConfig(format=logfmt, datefmt='%d/%m/%y %H:%M:%S %p', level=logging_levels[loggingLevel])
+        else :
+            logging.basicConfig(format=logfmt, datefmt='%d/%m/%y %H:%M:%S %p')
         print('Now logging to sys.stderr')
         sys.stdout.flush()
 
@@ -5158,14 +5256,14 @@ Validate an address against some known Australian concept (postcode, known Austr
             with open(configfile, 'rt', newline='', encoding='utf-8') as configfile:
                 config = json.load(configfile, object_pairs_hook=collections.OrderedDict)
         except IOError:
-            verifydata.logger.critical('configFile (%s/%s) failed to load', configDir, configFile)
+            logging.critical('configFile (%s/%s) failed to load', configDir, configFile)
             logging.shutdown()
             sys.exit(EX_CONFIG)
 
         # Check that we have a databaseName if we have a databaseType
         if DatabaseType is not None:
             if DatabaseType not in config:
-                verifydata.logger.critical('DatabaseType(%s) not found in configuraton file(%s)', DatabaseType, configfile)
+                logging.critical('DatabaseType(%s) not found in configuraton file(%s)', DatabaseType, configfile)
                 logging.shutdown()
                 sys.exit(EX_USAGE)
             if 'connectionString' not in config[DatabaseType]:
@@ -5230,13 +5328,13 @@ Validate an address against some known Australian concept (postcode, known Austr
 
         if configWeights:
             if 'weights' not in config:
-                verifydata.logger.critical('weights not found in configuraton file(%s)', configfile)
+                logging.critical('weights not found in configuraton file(%s)', configfile)
                 logging.shutdown()
                 sys.exit(EX_USAGE)
             if 'suburbSourceWeight' in config['weights']:
                 suburbSourceWeight = config['weights']['suburbSourceWeight']
                 if not isinstance(suburbSourceWeight, dict):
-                    verifydata.logger.critical('suburbSourceWeight not a dictionary in configuraton file(%s)', configfile)
+                    logging.critical('suburbSourceWeight not a dictionary in configuraton file(%s)', configfile)
                     logging.shutdown()
                     sys.exit(EX_USAGE)
                 for source in suburbSourceWeight:
@@ -5246,7 +5344,7 @@ Validate an address against some known Australian concept (postcode, known Austr
             if 'streetSourceWeight' in config['weights']:
                 streetSourceWeight = config['weights']['streetSourceWeight']
                 if not isinstance(streetSourceWeight, dict):
-                    verifydata.logger.critical('streetSourceWeight not a dictionary in configuraton file(%s)', configfile)
+                    logging.critical('streetSourceWeight not a dictionary in configuraton file(%s)', configfile)
                     logging.shutdown()
                     sys.exit(EX_USAGE)
                 for source in streetSourceWeight:
@@ -5256,354 +5354,25 @@ Validate an address against some known Australian concept (postcode, known Austr
             if 'fuzzLevels' in config['weights']:
                 fuzzLevels = config['weights']['fuzzLevels']
                 if not isinstance(fuzzLevels, list):
-                    verifydata.logger.critical('fuzzLevels not a list in configuraton file(%s)', configfile)
+                    logging.critical('fuzzLevels not a list in configuraton file(%s)', configfile)
                     logging.shutdown()
                     sys.exit(EX_USAGE)
                 for fuzz in range(len(fuzzLevels) - 1, -1, -1):
                     if not isinstance(fuzzLevels[fuzz], int):
-                        verifydata.logger.warning(' Invalid fuzzLevel (%s) in configuraton file(%s) - ignoring', fuzz, configfile)
+                        logging.warning(' Invalid fuzzLevel (%s) in configuraton file(%s) - ignoring', fuzz, configfile)
                         del fuzzLevels[fuzz]
                         continue
                     if (fuzzLevels[fuzz] < 1) or (fuzzLevels[fuzz] > 10):
-                        verifydata.logger.warning(' Invalid fuzzLevel (%d) in configuraton file(%s) - ignoring', fuzz, configfile)
+                        logging.warning(' Invalid fuzzLevel (%d) in configuraton file(%s) - ignoring', fuzz, configfile)
                         del fuzzLevels[fuzz]
 
-
-    # Check if files have headings and if so read in the mapping
-    fileHas = {}
-    if hasHeading:
-        mappingfile = os.path.join(inputDir, headingsMappingFile)
-        try:
-            with open(mappingfile, 'rt', newline='', encoding='utf-8') as mapfile:
-                fileHas = json.load(mapfile, object_pairs_hook=collections.OrderedDict)
-        except IOError:
-            verifydata.logger.critical('headingsMappingFile (%s/%s) failed to load', inputDir, headingsMappingFile)
-            logging.shutdown()
-            sys.exit(EX_CONFIG)
-        if 'addressLines' not in fileHas:
-            logging.fatal('Headings mapping file(%s) does not define column(s) for addressLines', os.path.join(inputDir, headingsMappingFile))
-            sys.exit(EX_CONFIG)
-
-    # Check if we are going to need inputDir and outputDir
-    isStdIO = True
-    for fileName in args.args:
-        if fileName != '-':
-            isStdIO = False
-    if not isStdIO:
-        # Check that the inputDir exists
-        if not os.path.isdir(inputDir):
-            verifydata.logger.critical('Usage error - inputDir (%s) does not exits', inputDir)
-            logging.shutdown()
-            sys.exit(EX_USAGE)
-        # Check that the outputDir exists
-        if not os.path.isdir(outputDir):
-            verifydata.logger.critical('Usage error - outputDir (%s) does not exits', outputDir)
-            logging.shutdown()
-            sys.exit(EX_USAGE)
-
     # Read in the G-NAF data and build the data structures for verifying addresses
-    initData(verifydata)
+    initData()
 
-    # Now process every input arguement
-    if verifyAddressService:
-        print('Starting verifyAddress Service', file=sys.stdout)
-        sys.stdout.flush()
-        try:
-            httpd = ThreadedHTTPServer(('', verifyAddressPort), verifyAddressHandler)
-# fork() NOT AVAILABLE ON WINDOWS
-#             httpd = ForkingHTTPServer(('', autocodePort), autocodingHandler)
-            print ('Started httpserver on port', verifyAddressPort, file=sys.stdout)
-            sys.stdout.flush()
-            httpd.serve_forever()
-        except KeyboardInterrupt:
-            print ('Stopped httpserver on port', verifyAddressPort, file=sys.stdout)
-            sys.stdout.flush()
-            for hdlr in verifydata.logger.handlers:
-                hdlr.flush()
-
-        # Wrap it up
-        logging.shutdown()
-        sys.stderr.flush()
-        sys.exit(EX_OK)
-
-    elif len(args.args) == 0:
-        # Read addresses from standard input
-        lines = sys.stdin.readlines()
-        for line in lines:
-            line = line.strip()
-            verifydata.Address = {'addressLines': [line]}
-            verifyAddress(verifydata)
-            print('Original text:', line, file=sys.stdout)
-            print('Structured address:', file=sys.stdout)
-            print('Address line 1:', verifydata.result['addressLine1'], file=sys.stdout)
-            print('Address line 2:', verifydata.result['addressLine2'], file=sys.stdout)
-            print('Suburb:', verifydata.result['suburb'], file=sys.stdout)
-            print('Postcode:', verifydata.result['postcode'], file=sys.stdout)
-            print('State:', verifydata.result['state'], file=sys.stdout)
-            print('SA1:', verifydata.result['SA1'], file=sys.stdout)
-            print('LGA:', verifydata.result['LGA'], file=sys.stdout)
-            print('Mesh Block:', verifydata.result['Mesh Block'], file=sys.stdout)
-            print('Longitude:', verifydata.result['longitude'], file=sys.stdout)
-            print('Latitude:', verifydata.result['latitude'], file=sys.stdout)
-            print('G-NAF ID:', verifydata.result['G-NAF ID'], file=sys.stdout)
-            print('Accuracy:', verifydata.result['accuracy'], file=sys.stdout)
-            print('Fuzz Level:', verifydata.result['fuzzLevel'], file=sys.stdout)
-            print('Score:', verifydata.result['score'], file=sys.stdout)
-            print('Status:', verifydata.result['status'], file=sys.stdout)
-            if 'messages' in verifydata.result['messages']:
-                for i in range(len(verifydata.result['messages'])):
-                    print('Message:', verifydata.result['messages'][i], file=sys.stdout)
-
-    else:   # Process one or more file. Each file must contain one address per line
-        for fileName in args.args:
-            # Check for stdin
-            inDialect = csv.excel
-            if fileName == '-':
-                fpIn = sys.stdin
-                fpOut = sys.stdout
-            else:       # Check if the input file exists
-                if not os.path.isfile(os.path.join(inputDir, fileName)):
-                    verifydata.logger.critical('Usage error - input file (%s) is missing', os.path.join(inputDir, fileName))
-                    logging.shutdown()
-                    sys.exit(EX_USAGE)
-
-                # Open the input, output and logging files
-                try:
-                    fpIn = open(os.path.join(inputDir, fileName), 'rt', newline='', encoding='utf-8', errors='ignore')
-                except IOError:
-                    verifydata.logger.critical('Usage error - input file (%s) cannot be read', os.path.join(inputDir, fileName))
-                    logging.shutdown()
-                    sys.exit(EX_USAGE)
-
-                # If CSV then sniff the CSV file structure
-                if hasHeading:
-                    inDialect = csv.Sniffer().sniff(fpIn.read(4096))
-                    fpIn.seek(0)
-
-                # Give the output file the same name as the input file - unless they are in the same directory
-                outFileName = 'verifyAddress_' + os.path.basename(fileName)
-
-                # Try creating the output file
-                try:
-                    fpOut = open(os.path.join(outputDir, outFileName), 'wt', newline='', encoding='utf-8')
-                except IOError:
-                    verifydata.logger.critical('Usage error - cannot create output file (%s)', os.path.join(outputDir, outFileName))
-                    # Close the input file and try the next argument
-                    fpIn.close()
-                    logging.shutdown()
-                    sys.exit(EX_USAGE)
-                if hasHeading:
-                    outDialect = csv.excel
-                    outDialect.delimiter = str(',')
-                    outWriter = csv.writer(fpOut, outDialect)
-
-                # Now try swapping the logging over
-                # Craft the log filename from the root of the output filename, but with '.log' as the extension
-                (logRoot, outExt) = os.path.splitext(outFileName)
-                logFileName = logRoot + '.log'
-
-                # Check for a name clash - input file ends in '.log' !!!!
-                if (logDir == outputDir) and (outFileName == logFileName):
-                    logFileName = 'autocoded_log_' + logFileName
-                elif os.path.abspath(os.path.join(inputDir, fileName)) == os.path.abspath(os.path.join(logDir, logFileName)):
-                    logFileName = 'autocoded_log_' + logFileName
-
-                # Start by closing all the existing handlers
-                fhFound = False
-                for hdlr in verifydata.logger.handlers:
-                    hdlr.close()
-                    if hdlr == fh:
-                        fhFound = True
-                if fhFound:
-                    verifydata.logger.removeHandler(fh)
-
-                # Now set up logging again
-                with open(os.path.join(logDir,logFileName), 'wt', newline='', encoding='utf-8') as logfile:
-                    pass
-                fh = logging.FileHandler(filename=os.path.join(logDir, logFileName))
-                fh.setFormatter(verifydata.formatter)
-                if loggingLevel    :    # Change the logging level from "WARN" if the -v vebose option is specified
-                    fh.setLevel(logging_levels[loggingLevel])
-                else:
-                    fh.setLevel(logging.WARNING)
-                verifydata.logger.addHandler(fh)
-                verifydata.logger.debug('csv dialect: delimiter(%s), doublequote(%s), escapechar(%s), lineterminator(%s), quotechar(%s), quoting(%s), skipinitialspace(%s)',
-                                        inDialect.delimiter, inDialect.doublequote, inDialect.escapechar, inDialect.lineterminator, inDialect.quotechar, inDialect.quoting, inDialect.skipinitialspace)
-
-            # Now check each line in the file - every line must be an address
-            lines = fpIn.readlines()
-            header = True
-            inFileHas = {}
-            count = 0
-            if returnBoth:
-                headingParts = ['isPostalService', 'isCommunity', 'Building Name', 'House No.', 'Street', 'AddressLine1', 'AddressLine2', 'AddressLine1Abbrev', 'AddressLine2Abbrev', 'Suburb', 'State', 'Postcode', 'SA1', 'LGA', 'Mesh Block', 'Longitude', 'Latitude', 'G-NAF ID', 'Accuracy', 'Fuzz Level', 'Score', 'Status', 'Message', 'Changed']
-                addressParts = ['isPostalService', 'isCommunity', 'buildingName', 'houseNo', 'street', 'addressLine1', 'addressLine2', 'addressLine1Abbrev', 'addressLine2Abbrev', 'suburb', 'state', 'postcode', 'SA1', 'LGA', 'Mesh Block', 'latitude', 'longitude', 'G-NAF ID', 'accuracy', 'fuzzLevel', 'score', 'status', 'messages']
-            else:
-                headingParts = ['isPostalService', 'isCommunity', 'Building Name', 'House No.', 'Street', 'AddressLine1', 'AddressLine2', 'Suburb', 'State', 'Postcode', 'SA1', 'LGA', 'Mesh Block', 'Longitude', 'Latitude', 'G-NAF ID', 'Accuracy', 'Fuzz Level', 'Score', 'Status', 'Message', 'Changed']
-                addressParts = ['isPostalService', 'isCommunity', 'buildingName', 'houseNo', 'street', 'addressLine1', 'addressLine2', 'suburb', 'state', 'postcode', 'SA1', 'LGA', 'Mesh Block', 'latitude', 'longitude', 'G-NAF ID', 'accuracy', 'fuzzLevel', 'score', 'status', 'messages']
-            for line in lines:
-                line = line.strip()
-                if hasHeading:
-                    # file must be a CSV file
-                    row = list(csv.reader([line], inDialect))[0]
-                    verifydata.logger.debug('csv line(%s)', repr(row))
-
-                    # Check for end of file
-                    if (row[0] == 'End of File') and (len(row) == 2):
-                        outRow = []
-                        outRow.append('End of File')
-                        outRow.append(count)
-                        outWriter.writerow(outRow)
-                        break
-
-                    if header:
-                        columns = 0
-                        for i, col in enumerate(row):
-                            columns += 1
-                            if col in inFileHas:
-                                if col in fileHas:
-                                    logging.fatal('Ambiguous column heading. Require column(%s) defined more than once', col)
-                                    sys.exit(EX_CONFIG)
-                                else:
-                                    logging.warning('Ambiguous column heading. Column(%s) defined more than once', col)
-                            inFileHas[col] = i
-                        verifydata.logger.debug('header line(%s)', repr(inFileHas))
-                        verifydata.logger.debug('mapping line(%s)', repr(fileHas))
-                        for addressPart in fileHas:
-                            if addressPart == '/* comment */':
-                                continue
-                            if isinstance(fileHas[addressPart], list):
-                                for i in range(len(fileHas[addressPart])):
-                                    if fileHas[addressPart][i] not in inFileHas:
-                                        logging.critical('Input file (%s) is missing column(%s)', os.path.join(inputDir, fileName), fileHas[addressPart][i])
-                                        sys.exit(EX_CONFIG)
-                            else:
-                                if fileHas[addressPart] not in inFileHas:
-                                    logging.critical('Input file (%s) is missing column(%s)', os.path.join(inputDir, fileName), fileHas[addressPart])
-                                    sys.exit(EX_CONFIG)
-                        outRow = row[:]
-                        for addressPart in headingParts:
-                            outRow.append(addressPart)
-                        outWriter.writerow(outRow)
-                        header = False
-                        continue
-                    else:
-                        # Process a data row
-                        if len(row) != columns:
-                            logging.critical('Input record has wrong number of columns - line columns(%d), heading columns(%d)\n%s\n%s',
-                                             len(row), columns, str(line), repr(row))
-                            continue
-
-                        outRow = row[:]
-                        verifydata.Address = {}
-                        for addressPart in fileHas:
-                            if addressPart == '/* comment */':
-                                continue
-                            if isinstance(fileHas[addressPart], list):
-                                verifydata.Address[addressPart] = []
-                                for i in range(len(fileHas[addressPart])):
-                                    verifydata.logger.debug('saving (%s) as (%s)', repr(row[inFileHas[fileHas[addressPart][i]]]), repr(addressPart))
-                                    verifydata.Address[addressPart].append(row[inFileHas[fileHas[addressPart][i]]])
-                            else:
-                                verifydata.logger.debug('saving (%s) as (%s)', repr(row[inFileHas[fileHas[addressPart]]]), repr(addressPart))
-                                verifydata.Address[addressPart] = row[inFileHas[fileHas[addressPart]]]
-                else:
-                    # A line from a file with no headings
-                    verifydata.Address = {'addressLines': [line]}
-
-                verifyAddress(verifydata)
-
-                if hasHeading:
-                    # Save the returned address
-                    for addressPart in addressParts:
-                        if addressPart in verifydata.result:
-                            if isinstance(verifydata.result[addressPart], str) and (verifydata.result[addressPart] != '') and (verifydata.result[addressPart][-1] == ','):
-                                verifydata.result[addressPart] = verifydata.result[addressPart][:-1]
-                                outRow.append(verifydata.result[addressPart])
-                            elif isinstance(verifydata.result[addressPart], list):
-                                first = True
-                                part = ''
-                                for i in range(len(verifydata.result[addressPart])):
-                                    if first:
-                                        first = False
-                                    else:
-                                        part += ', '
-                                    part += verifydata.result[addressPart][i]
-                                outRow.append(part)
-                            else:
-                                outRow.append(verifydata.result[addressPart])
-                        else:
-                            outRow.append('')
-                    # Now check the address
-                    changed = ''
-                    for addressPart in fileHas:
-                        if addressPart == '/* comment */':
-                            continue
-                        if isinstance(fileHas[addressPart], list):
-                            if (len(fileHas[addressPart]) > 0) and (row[inFileHas[fileHas[addressPart][0]]] != verifydata.result['addressLine1']):
-                                if changed != '':
-                                    changed += ', '
-                                changed += 'addressLine1'
-                            if (len(fileHas[addressPart]) > 1) and (row[inFileHas[fileHas[addressPart][1]]] != verifydata.result['addressLine2']):
-                                if changed != '':
-                                    changed += ', '
-                                changed += 'addressLine2'
-                        elif row[inFileHas[fileHas[addressPart]]] != verifydata.result[addressPart]:
-                            if changed != '':
-                                changed += ', '
-                            changed += addressPart
-                    outRow.append(changed)
-                    outWriter.writerow(outRow)
-                    count += 1
-                else:
-                    print('Original text:', line, file=fpOut)
-                    print('Structured address:', file=fpOut)
-                    print('Postal Delivery Service address:', verifydata.result['isPostalService'], file=fpOut)
-                    print('Community address:', verifydata.result['isCommunity'], file=fpOut)
-                    print('House No.:', verifydata.result['houseNo'], file=fpOut)
-                    if (verifydata.result['isPostalService']) and (verifydata.result['buildingName'] != ''):
-                        print('Building Name:', verifydata.result['buildingName'], file=fpOut)
-                    print('Street:', verifydata.result['street'], file=fpOut)
-                    if (verifydata.result['addressLine1'] != '') and (verifydata.result['addressLine1'][-1] == ','):
-                        verifydata.result['addressLine1'] = verifydata.result['addressLine1'][:-1]
-                    print('Address line 1:', verifydata.result['addressLine1'], file=fpOut)
-                    if (verifydata.result['addressLine2'] != '') and (verifydata.result['addressLine2'][-1] == ','):
-                        verifydata.result['addressLine2'] = verifydata.result['addressLine2'][:-1]
-                    print('Address line 2:', verifydata.result['addressLine2'], file=fpOut)
-                    if returnBoth:
-                        if (verifydata.result['addressLine1Abbrev'] != '') and (verifydata.result['addressLine1Abbrev'][-1] == ','):
-                            verifydata.result['addressLine1Abbrev'] = verifydata.result['addressLine1Abbrev'][:-1]
-                        print('Abbreviated Address line 1:', verifydata.result['addressLine1Abbrev'], file=fpOut)
-                        if (verifydata.result['addressLine2Abbrev'] != '') and (verifydata.result['addressLine2Abbrev'][-1] == ','):
-                            verifydata.result['addressLine2Abbrev'] = verifydata.result['addressLine2Abbrev'][:-1]
-                        print('Abbreviated Address line 2:', verifydata.result['addressLine2Abbrev'], file=fpOut)
-                    if (not verifydata.result['isPostalService']) and (verifydata.result['buildingName'] != ''):
-                        print('Building Name:', verifydata.result['buildingName'], file=fpOut)
-                    print('Suburb:', verifydata.result['suburb'], file=fpOut)
-                    print('Postcode:', verifydata.result['postcode'], file=fpOut)
-                    print('State:', verifydata.result['state'], file=fpOut)
-                    print('SA1:', verifydata.result['SA1'], file=fpOut)
-                    print('LGA:', verifydata.result['LGA'], file=fpOut)
-                    print('Mesh Block:', verifydata.result['Mesh Block'], file=fpOut)
-                    print('Latitude:', verifydata.result['latitude'], file=fpOut)
-                    print('Longitude:', verifydata.result['longitude'], file=fpOut)
-                    print('G-NAF ID:', verifydata.result['G-NAF ID'], file=fpOut)
-                    print('Accuracy:', verifydata.result['accuracy'], file=fpOut)
-                    print('Fuzz Level:', verifydata.result['fuzzLevel'], file=fpOut)
-                    print('Score:', verifydata.result['score'], file=fpOut)
-                    print('Status:', verifydata.result['status'], file=fpOut)
-                    if ('messages' in verifydata.result) and (len(verifydata.result['messages']) > 0):
-                        for i in range(len(verifydata.result['messages'])):
-                            print('Message:', verifydata.result['messages'][i], file=fpOut)
-                    print(file=fpOut)
-
-            # And close the files
-            if fileName != '-':
-                fpIn.close()
-                fpOut.close()
+    # Now run the flask app
+    app.run(host="0.0.0.0", port=verifyAddressPort)
 
     # Wrap it up
     logging.shutdown()
-    sys.stdout.flush()
     sys.stderr.flush()
     sys.exit(EX_OK)
